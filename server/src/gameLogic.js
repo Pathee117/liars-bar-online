@@ -4,7 +4,6 @@ export function buildDeck(numPlayers) {
   const decksToUse = Math.ceil(numPlayers / 4);
   const suits = ["S", "H", "D", "C"];
   const ranks = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
-
   const deck = [];
 
   for (let d = 0; d < decksToUse; d++) {
@@ -27,7 +26,6 @@ export function buildDeck(numPlayers) {
       });
     }
   }
-
   return deck;
 }
 
@@ -58,10 +56,10 @@ export function dealHands(deck, players, handSize = 5) {
 export function makeInitialGameState(lobby) {
   return {
     lobbyId: lobby.id,
-    state: "playing",          // overall match state
-    phase: "chooseRank",       // "chooseRank" | "round"
-    tableRank: null,           // chosen per round
-    turnIndex: 0,              // current player (chooser at phase start)
+    state: "playing",
+    phase: "chooseRank", // "chooseRank" | "round"
+    tableRank: null,
+    turnIndex: 0,
     responderIndex: null,
 
     pile: [],
@@ -74,6 +72,21 @@ export function makeInitialGameState(lobby) {
   };
 }
 
+// ---- Revolver helpers ----
+// A 6-chamber revolver with 1 bullet at random position.
+// We advance chamber on each penalty.
+export function newRevolver() {
+  const bulletIndex = Math.floor(Math.random() * 6); // 0..5
+  return { chamberIndex: 0, bulletIndex };
+}
+
+// Returns { fired: boolean, died: boolean }
+export function pullTrigger(revolver) {
+  revolver.chamberIndex = (revolver.chamberIndex + 1) % 6;
+  const fired = revolver.chamberIndex === revolver.bulletIndex;
+  return { fired, died: fired };
+}
+
 export function nextAliveIndex(lobby, startIndex) {
   const players = lobby.players;
   const n = players.length;
@@ -81,18 +94,17 @@ export function nextAliveIndex(lobby, startIndex) {
   for (let step = 1; step <= n; step++) {
     const i = (startIndex + step) % n;
     const p = players[i];
-    if (p.connected && p.lives > 0) return i;
+    if (p.connected && p.alive) return i;
   }
   return startIndex;
 }
 
-// Jokers are always truthful
 export function isTruthfulPlay(cards, roundRank) {
   return cards.every(c => c.r === roundRank || c.r === "JOKER");
 }
 
 export function checkWinner(lobby) {
-  const alive = lobby.players.filter(p => p.lives > 0);
+  const alive = lobby.players.filter(p => p.alive);
   return alive.length === 1 ? alive[0] : null;
 }
 
@@ -119,7 +131,7 @@ export function publicSnapshot(lobby) {
     players: lobby.players.map(p => ({
       socketId: p.socketId,
       name: p.name,
-      lives: p.lives,
+      alive: p.alive,                 // NEW
       cardsCount: p.hand.length,
       connected: p.connected
     }))

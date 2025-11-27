@@ -39,11 +39,14 @@ export default function Game() {
     });
 
     socket.on("system:log", (evt) => {
-      if (evt.type === "hand:refill") {
-        pushToast(`${evt.name} refilled hand (${evt.count})`);
-      }
       if (evt.type === "round:rankChosen") {
         pushToast(`${evt.by} chose rank ${evt.rank}`);
+      }
+      if (evt.type === "player:died") {
+        pushToast(`${evt.name} died.`);
+      }
+      if (evt.type === "player:survived") {
+        pushToast(`${evt.name} survived.`);
       }
     });
 
@@ -73,7 +76,8 @@ export default function Game() {
     return game.players.find(p => p.name === myName) || null;
   }, [game, myName]);
 
-  const isSpectator = !me;
+  // Dead players are also spectators (can’t act)
+  const isSpectator = !me || !me.alive;
 
   if (!game) {
     return (
@@ -108,7 +112,7 @@ export default function Game() {
   const responder =
     game.responderIndex != null ? game.players[game.responderIndex] : null;
 
-  const isAlive = me && me.lives > 0;
+  const isAlive = me && me.alive;
 
   const isMyTurn =
     isAlive &&
@@ -179,26 +183,25 @@ export default function Game() {
 
       {isSpectator && (
         <div className="panel-soft" style={{ padding: 10, marginBottom: 12 }}>
-          <b>Spectating</b>
+          <b>{me?.alive === false ? "You are dead" : "Spectating"}</b>
           <span className="muted" style={{ marginLeft: 8 }}>
-            You joined mid-game. You can watch this match and play next one.
+            {me?.alive === false
+              ? "You can watch until the match ends."
+              : "You joined mid-game. You can watch this match."}
           </span>
         </div>
       )}
 
-      {/* CHOOSE-RANK PANEL */}
       {isChoosingRank && (
         <div className="panel" style={{ padding: 14, marginBottom: 12, borderColor: "var(--border-strong)" }}>
           <div style={{ fontWeight: 900, marginBottom: 6 }}>
             Round starting — choose table rank
           </div>
-
           <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
             {canChooseRank
               ? "Pick the rank everyone must claim this round."
-              : `Waiting for ${currentPlayer?.name} to choose the rank...`}
+              : `Waiting for ${currentPlayer?.name} to choose...`}
           </div>
-
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
             {RANKS.map(r => (
               <button
@@ -214,7 +217,6 @@ export default function Game() {
         </div>
       )}
 
-      {/* Top status */}
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
         <StatusBox title="Table Rank">
           <div style={{ fontSize: 28, fontWeight: 900, color: "var(--accent)" }}>
@@ -253,40 +255,43 @@ export default function Game() {
         </StatusBox>
       </div>
 
-      {/* Table */}
       <div className="grid" style={{ gridTemplateColumns: "2fr 1fr" }}>
         <div>
-          <h3 className="h3" style={{ margin: "6px 0" }}>Active Players</h3>
-          <div className="grid">
-            {game.players
-              .filter(p => p.connected && p.lives > 0)
-              .map(p => {
-                const isTurn = p.socketId === currentPlayer?.socketId;
-                const isNext = responder && p.socketId === responder.socketId;
+          <h3 className="h3" style={{ margin: "6px 0" }}>Players</h3>
 
-                return (
-                  <div
-                    key={p.socketId}
-                    className="panel-soft"
-                    style={{
-                      padding: "10px 12px",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      borderColor: isTurn ? "var(--border-strong)" : "var(--border)"
-                    }}
-                  >
-                    <div>
-                      <b>{p.name}</b>
-                      {isTurn && <span className="badge" style={{ marginLeft: 8 }}>playing</span>}
-                      {isNext && !isTurn && <span className="badge" style={{ marginLeft: 8 }}>responder</span>}
-                    </div>
-                    <div className="muted" style={{ fontSize: 13 }}>
-                      lives <b style={{ color: "var(--text)" }}>{p.lives}</b> · cards {p.cardsCount}
-                    </div>
+          <div className="grid">
+            {game.players.map(p => {
+              const isTurn = p.socketId === currentPlayer?.socketId;
+              const isNext = responder && p.socketId === responder.socketId;
+              const dead = !p.alive;
+
+              return (
+                <div
+                  key={p.socketId}
+                  className="panel-soft"
+                  style={{
+                    padding: "10px 12px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    borderColor: isTurn ? "var(--border-strong)" : "var(--border)",
+                    opacity: dead ? 0.45 : 1,
+                    filter: dead ? "grayscale(1)" : "none"
+                  }}
+                >
+                  <div>
+                    <b>{p.name}</b>
+                    {dead && <span className="badge danger" style={{ marginLeft: 8 }}>dead</span>}
+                    {isTurn && !dead && <span className="badge" style={{ marginLeft: 8 }}>playing</span>}
+                    {isNext && !isTurn && !dead && <span className="badge" style={{ marginLeft: 8 }}>responder</span>}
                   </div>
-                );
-              })}
+
+                  <div className="muted" style={{ fontSize: 13 }}>
+                    cards {p.cardsCount} · {p.connected ? "connected" : "disconnected"}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -299,19 +304,12 @@ export default function Game() {
         </div>
       </div>
 
-      {/* Your area */}
       <div style={{ marginTop: 16 }}>
         <h3 className="h3">Your Hand</h3>
 
-        {!isSpectator && !isAlive && (
-          <div style={{ color: "var(--danger)", fontWeight: 800, marginBottom: 8 }}>
-            You are eliminated. Waiting for game end.
-          </div>
-        )}
-
         {isSpectator || isChoosingRank ? (
           <div className="muted" style={{ padding: "8px 0" }}>
-            {isSpectator ? "Hand hidden while spectating." : "Dealing after rank selection..."}
+            {isChoosingRank ? "Dealing after rank selection..." : "Hand hidden while spectating."}
           </div>
         ) : (
           <>
@@ -354,8 +352,7 @@ export default function Game() {
   );
 }
 
-/* ---------- UI helpers ---------- */
-
+/* helpers */
 function StatusBox({ title, children }) {
   return (
     <div className="panel" style={{ padding: "12px 14px", minHeight: 78 }}>
@@ -423,7 +420,7 @@ function RoundModal({ modal }) {
         </div>
 
         <div className="muted" style={{ marginTop: 6 }}>
-          {modal.loser} loses a life • lives left: {modal.loserLives}
+          {modal.loser} pulled the trigger… {modal.died ? "and died." : "and survived."}
         </div>
 
         <style>{`

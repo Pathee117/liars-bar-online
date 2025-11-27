@@ -13,7 +13,9 @@ import {
   nextAliveIndex,
   isTruthfulPlay,
   publicSnapshot,
-  checkWinner
+  checkWinner,
+  newRevolver,
+  pullTrigger
 } from "./gameLogic.js";
 
 const app = express();
@@ -45,7 +47,6 @@ io.on("connection", (socket) => {
 
   socket.on("ping", (msg) => socket.emit("pong", { msg, at: Date.now() }));
 
-  // Create lobby
   socket.on("lobby:create", ({ name }, cb) => {
     const lobby = createLobby(socket.id, (name || "Player").trim());
     socket.join(lobby.id);
@@ -59,7 +60,6 @@ io.on("connection", (socket) => {
     cb?.({ lobbyId: lobby.id });
   });
 
-  // Join lobby
   socket.on("lobby:join", ({ lobbyId, name }, cb) => {
     const lobby = getLobby(lobbyId);
     if (!lobby) return cb?.({ error: "Lobby not found" });
@@ -67,7 +67,6 @@ io.on("connection", (socket) => {
     const trimmed = (name || "Player").trim();
     socket.join(lobbyId);
 
-    // Midgame join => spectator unless reconnect by name
     if (lobby.state === "playing") {
       const existing = lobby.players.find(p => p.name === trimmed && !p.connected);
       if (existing) {
@@ -103,7 +102,7 @@ io.on("connection", (socket) => {
     cb?.({ ok: true });
   });
 
-  // Start game (host only) -> goes into chooseRank phase, NO DEAL YET
+  // Start game: everyone gets a fresh revolver, no dealing until rank chosen
   socket.on("game:start", ({ lobbyId }, cb) => {
     const lobby = getLobby(lobbyId);
     if (!lobby) return cb?.({ error: "Lobby not found" });
@@ -119,15 +118,16 @@ io.on("connection", (socket) => {
     lobby.state = "playing";
     lobby.game = makeInitialGameState(lobby);
 
-    // reset hands + lives
+    // reset match data on players
     lobby.players.forEach(p => {
-      p.lives = 3;
+      p.alive = true;             // NEW (replaces lives)
       p.hand = [];
+      p.revolver = newRevolver(); // NEW
     });
 
-    // first chooser = first alive/connected
-    let firstAlive = lobby.players.findIndex(p => p.connected && p.lives > 0);
+    let firstAlive = lobby.players.findIndex(p => p.connected && p.alive);
     if (firstAlive === -1) firstAlive = 0;
+
     lobby.game.turnIndex = firstAlive;
     lobby.game.phase = "chooseRank";
     lobby.game.tableRank = null;
@@ -142,7 +142,6 @@ io.on("connection", (socket) => {
     cb?.({ ok: true });
   });
 
-  // --- NEW: chooser selects rank before deal ---
   socket.on("round:chooseRank", ({ lobbyId, rank }, cb) => {
     const lobby = getLobby(lobbyId);
     if (!lobby || lobby.state !== "playing")
@@ -163,8 +162,7 @@ io.on("connection", (socket) => {
     g.tableRank = rank;
     g.phase = "round";
 
-    // Deal 5 fresh cards to all active players
-    const active = lobby.players.filter(p => p.connected && p.lives > 0);
+    const active = lobby.players.filter(p => p.connected && p.alive);
 
     const deck = shuffle(buildDeck(active.length));
     const { hands, remainingDeck } = dealHands(deck, active, 5);
@@ -187,7 +185,6 @@ io.on("connection", (socket) => {
     cb?.({ ok: true });
   });
 
-  // Play cards (only during round phase)
   socket.on("turn:play", ({ lobbyId, cardIds, declaredCount }, cb) => {
     const lobby = getLobby(lobbyId);
     if (!lobby || lobby.state !== "playing")
@@ -200,6 +197,7 @@ io.on("connection", (socket) => {
     const current = lobby.players[g.turnIndex];
     if (!current || current.socketId !== socket.id)
       return cb?.({ error: "Not your turn" });
+    if (!current.alive) return cb?.({ error: "You are dead" });
 
     if (!Array.isArray(cardIds) || cardIds.length < 1 || cardIds.length > 3)
       return cb?.({ error: "Play 1–3 cards" });
@@ -209,7 +207,7 @@ io.on("connection", (socket) => {
     const cardsToPlay = [];
     for (const id of cardIds) {
       const idx = current.hand.findIndex(c => c.id === id);
-      if (idx === -1) return cb?.({ error: "Card not in your hand" });
+      if (idx === -1) return cb?.({ error: "Card not in hand" });
       cardsToPlay.push(current.hand[idx]);
     }
 
@@ -230,7 +228,6 @@ io.on("connection", (socket) => {
     cb?.({ ok: true });
   });
 
-  // Accept (only during round)
   socket.on("turn:accept", ({ lobbyId }, cb) => {
     const lobby = getLobby(lobbyId);
     if (!lobby || lobby.state !== "playing")
@@ -243,6 +240,7 @@ io.on("connection", (socket) => {
     const responder = lobby.players[g.responderIndex];
     if (!responder || responder.socketId !== socket.id)
       return cb?.({ error: "Only responder can accept" });
+    if (!responder.alive) return cb?.({ error: "You are dead" });
 
     g.turnIndex = g.responderIndex;
     g.responderIndex = null;
@@ -251,7 +249,6 @@ io.on("connection", (socket) => {
     cb?.({ ok: true });
   });
 
-  // Challenge (end round -> switch to chooseRank, no deal yet)
   socket.on("turn:challenge", ({ lobbyId }, cb) => {
     const lobby = getLobby(lobbyId);
     if (!lobby || lobby.state !== "playing")
@@ -264,6 +261,7 @@ io.on("connection", (socket) => {
     const responder = lobby.players[g.responderIndex];
     if (!responder || responder.socketId !== socket.id)
       return cb?.({ error: "Only responder can challenge" });
+    if (!responder.alive) return cb?.({ error: "You are dead" });
 
     const last = g.lastPlay;
     if (!last) return cb?.({ error: "Nothing to challenge" });
@@ -273,30 +271,33 @@ io.on("connection", (socket) => {
 
     const truthful = isTruthfulPlay(last.cards, g.tableRank);
 
-    let loser = null;
-    let result = null;
+    // Loser is either liar or responder
+    const loser = truthful ? responder : liar;
+    const result = truthful ? "truth" : "liar";
 
-    if (truthful) {
-      responder.lives -= 1;
-      loser = responder;
-      result = "truth";
-    } else {
-      liar.lives -= 1;
-      loser = liar;
-      result = "liar";
+    // Pull trigger on loser’s revolver
+    const shot = pullTrigger(loser.revolver);
+    if (shot.died) {
+      loser.alive = false;
+      loser.hand = [];
     }
 
-    // Send round summary for your modal
     io.to(lobby.id).emit("round:summary", {
       result: result === "liar" ? "liar" : "truth",
       liar: liar.name,
       challenger: responder.name,
       loser: loser.name,
-      loserLives: loser.lives,
-      previousRank: g.tableRank
+      previousRank: g.tableRank,
+      shotFired: shot.fired,
+      died: shot.died,
+      diedName: shot.died ? loser.name : null
     });
 
-    // Clear round state
+    io.to(lobby.id).emit("system:log", {
+      type: shot.died ? "player:died" : "player:survived",
+      name: loser.name
+    });
+
     g.pile = [];
     g.lastPlay = null;
     g.responderIndex = null;
@@ -304,11 +305,9 @@ io.on("connection", (socket) => {
     // Next chooser is responder (baseline rule)
     g.turnIndex = lobby.players.indexOf(responder);
 
-    // Switch to chooseRank phase before any cards are dealt
     g.phase = "chooseRank";
     g.tableRank = null;
 
-    // Winner check
     const winner = checkWinner(lobby);
     if (winner) {
       g.state = "ended";
