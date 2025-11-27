@@ -2,21 +2,63 @@ const suitMap = { S: "♠", H: "♥", D: "♦", C: "♣" };
 const redSuits = new Set(["H", "D"]);
 
 export default function CardView({ card, selected, disabled, onClick }) {
+  const isJoker = card.r === "JOKER";
   const isRed = redSuits.has(card.s);
 
+  // ----- JOKER CARD -----
+  if (isJoker) {
+    return (
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          width: 76,
+          height: 108,
+          borderRadius: 12,
+          border: selected
+            ? "2px solid var(--accent)"
+            : "1px solid rgba(255,255,255,0.12)",
+          background: "linear-gradient(180deg, #07101f 0%, #05060a 100%)",
+          color: "var(--accent)",
+          boxShadow: selected
+            ? "0 0 20px rgba(255,255,255,0.06), 0 0 26px rgba(34,211,238,0.45)"
+            : "0 8px 18px rgba(0,0,0,0.45)",
+          transform: selected ? "translateY(-7px)" : "translateY(0)",
+          transition: "all 0.12s ease",
+          cursor: disabled ? "not-allowed" : "pointer",
+          padding: 7,
+          display: "grid",
+          placeItems: "center",
+          fontWeight: 1000,
+          letterSpacing: 1.2,
+          textTransform: "uppercase",
+          opacity: disabled ? 0.8 : 1
+        }}
+        title="JOKER"
+      >
+        <div style={{ fontSize: 13, opacity: 0.9 }}>JOKER</div>
+        <div style={{ fontSize: 26, lineHeight: 1 }}>★</div>
+        <div style={{ fontSize: 11, opacity: 0.7 }}>WILD</div>
+      </button>
+    );
+  }
+
+  // ----- NORMAL CARD -----
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       style={{
-        width: 74,
-        height: 104,
+        width: 76,
+        height: 108,
         borderRadius: 12,
-        border: selected ? "2px solid #7c3aed" : "1px solid rgba(255,255,255,0.12)",
-        background: "linear-gradient(180deg, #ffffff 0%, #f3f4f6 100%)",
-        color: "#0b0f17",
+        border: selected
+          ? "2px solid var(--accent)"
+          : "1px solid rgba(255,255,255,0.12)",
+        background: "linear-gradient(180deg, #f8fafc 0%, #e5e7eb 100%)",
+        color: "#05060a",
         boxShadow: selected
-          ? "0 10px 22px rgba(124,58,237,0.45)"
+          ? "0 10px 22px rgba(34,211,238,0.45)"
           : "0 8px 18px rgba(0,0,0,0.35)",
         transform: selected ? "translateY(-7px)" : "translateY(0)",
         transition: "all 0.12s ease",
@@ -28,11 +70,25 @@ export default function CardView({ card, selected, disabled, onClick }) {
       }}
       title={`${card.r}${suitMap[card.s]}`}
     >
-      <div style={{ fontSize: 15, fontWeight: 900, color: isRed ? "#dc2626" : "#111", textAlign: "left" }}>
+      <div
+        style={{
+          fontSize: 15,
+          fontWeight: 900,
+          color: isRed ? "#dc2626" : "#111",
+          textAlign: "left"
+        }}
+      >
         {card.r}
       </div>
 
-      <div style={{ fontSize: 34, color: isRed ? "#dc2626" : "#111", lineHeight: 1, alignSelf: "center" }}>
+      <div
+        style={{
+          fontSize: 34,
+          color: isRed ? "#dc2626" : "#111",
+          lineHeight: 1,
+          alignSelf: "center"
+        }}
+      >
         {suitMap[card.s]}
       </div>
 

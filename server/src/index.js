@@ -20,8 +20,7 @@ import {
   isTruthfulPlay,
   publicSnapshot,
   checkWinner,
-  pickNextTableRank,
-  drawIfEmpty
+  pickNextTableRank
 } from "./gameLogic.js";
 
 const app = express();
@@ -46,7 +45,6 @@ io.on("connection", (socket) => {
         lobby.systemEvent = null;
       }
 
-      // If game running, refresh public snapshot for everyone
       if (lobby.state === "playing" && lobby.game) {
         io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
       }
@@ -77,13 +75,11 @@ io.on("connection", (socket) => {
 
     // ----- If game is playing, allow ONLY reconnects -----
     if (lobby.state === "playing") {
-      // Find an existing player by name who is disconnected
       const existing = lobby.players.find(
         p => p.name === trimmed && !p.connected
       );
 
       if (existing) {
-        // Reconnect as the same player
         existing.socketId = socket.id;
         existing.connected = true;
 
@@ -93,7 +89,6 @@ io.on("connection", (socket) => {
           name: trimmed
         });
 
-        // Send public snapshot + their private hand
         if (lobby.game) {
           io.to(socket.id).emit("game:update", publicSnapshot(lobby));
           io.to(socket.id).emit("hand:update", existing.hand || []);
@@ -102,7 +97,7 @@ io.on("connection", (socket) => {
         return cb?.({ ok: true, reconnected: true });
       }
 
-      // Otherwise spectator only
+      // Spectator only
       if (lobby.game) {
         io.to(socket.id).emit("game:update", publicSnapshot(lobby));
       }
@@ -112,7 +107,6 @@ io.on("connection", (socket) => {
     }
     // ----------------------------------------------------
 
-    // Normal lobby join pre-game
     const updated = addPlayer(lobbyId, socket.id, trimmed);
 
     io.to(lobbyId).emit("lobby:update", updated);
@@ -145,35 +139,30 @@ io.on("connection", (socket) => {
 
     lobby.state = "playing";
 
-    // Build enough decks for total roster size (2–8 supported)
     const deck = shuffle(buildDeck(lobby.players.length));
-
-    // Deal only to currently connected players
     const { hands, remainingDeck } = dealHands(deck, connectedPlayers, 5);
 
-    // Reset lives for all; only connected get hands now
+    // Everyone alive gets lives reset.
+    // Only connected at start receive hands.
     lobby.players.forEach(p => {
       p.lives = 3;
       if (p.connected) {
         p.hand = hands.get(p.socketId) || [];
       } else {
-        p.hand = []; // disconnected at start
+        p.hand = [];
       }
     });
 
     lobby.game = makeInitialGameState(lobby, remainingDeck);
 
-    // First turn = first connected alive player
     let firstAlive = lobby.players.findIndex(p => p.connected && p.lives > 0);
     if (firstAlive === -1) firstAlive = 0;
     lobby.game.turnIndex = firstAlive;
 
-    // Private hands to connected players only
     connectedPlayers.forEach(p => {
       io.to(p.socketId).emit("hand:update", p.hand);
     });
 
-    // Public snapshot
     io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
 
     const hostName =
@@ -210,7 +199,6 @@ io.on("connection", (socket) => {
     if (current.lives <= 0 || !current.connected)
       return cb?.({ error: "You are eliminated" });
 
-    // Validate ownership + collect cards
     const cardsToPlay = [];
     for (const id of cardIds) {
       const idx = current.hand.findIndex(c => c.id === id);
@@ -221,10 +209,9 @@ io.on("connection", (socket) => {
     // Remove played cards
     current.hand = current.hand.filter(c => !cardIds.includes(c.id));
 
-    // If empty, draw new hand
-    drawIfEmpty(lobby, current.socketId, 5);
+    // OPTION A: no refill mid-round.
+    // If they reach 0 cards, they sit out until next round.
 
-    // Update pile + lastPlay
     g.pile.push(...cardsToPlay);
     g.lastPlay = {
       playerSocketId: current.socketId,
@@ -233,7 +220,6 @@ io.on("connection", (socket) => {
       cards: cardsToPlay
     };
 
-    // Next responder (skips disconnected / eliminated)
     g.responderIndex = nextAliveIndex(lobby, g.turnIndex);
 
     io.to(current.socketId).emit("hand:update", current.hand);
@@ -282,14 +268,23 @@ io.on("connection", (socket) => {
 
     const truthful = isTruthfulPlay(last.cards, g.tableRank);
 
+    let loser = null;
+    let resultType = null;
+
     if (truthful) {
       responder.lives -= 1;
+      loser = responder;
+      resultType = "truth";
+
       io.to(lobby.id).emit("system:log", {
         type: "challenge:failed",
         by: responder.name
       });
     } else {
       liar.lives -= 1;
+      loser = liar;
+      resultType = "liar";
+
       io.to(lobby.id).emit("system:log", {
         type: "challenge:success",
         by: responder.name,
@@ -297,7 +292,17 @@ io.on("connection", (socket) => {
       });
     }
 
-    // Reset round
+    // Round summary for modal
+    io.to(lobby.id).emit("round:summary", {
+      result: resultType,           // "liar" | "truth"
+      challenger: responder.name,
+      liar: liar.name,
+      loser: loser.name,
+      loserLives: loser.lives,
+      previousRank: g.tableRank
+    });
+
+    // Reset pile / lastPlay
     g.pile = [];
     g.lastPlay = null;
 
@@ -305,12 +310,39 @@ io.on("connection", (socket) => {
     g.turnIndex = g.responderIndex;
     g.responderIndex = null;
 
-    // Rotate table rank for next round
+    // Rotate table rank
     g.tableRank = pickNextTableRank(g.tableRank);
+
     io.to(lobby.id).emit("system:log", {
       type: "round:new",
       rank: g.tableRank
     });
+
+    io.to(lobby.id).emit("round:nextRank", { rank: g.tableRank });
+
+    // ------------------------------
+    // NEW ROUND: re-deal 5 cards each
+    // ------------------------------
+    const active = lobby.players.filter(p => p.connected && p.lives > 0);
+
+    if (active.length >= 2) {
+      const newDeck = shuffle(buildDeck(active.length));
+      const { hands, remainingDeck } = dealHands(newDeck, active, 5);
+
+      active.forEach(p => {
+        p.hand = hands.get(p.socketId) || [];
+        io.to(p.socketId).emit("hand:update", p.hand);
+      });
+
+      g.remainingDeck = remainingDeck;
+      g.deckCount = remainingDeck.length;
+
+      io.to(lobby.id).emit("system:log", {
+        type: "round:redeal",
+        count: 5
+      });
+    }
+    // ------------------------------
 
     const winner = checkWinner(lobby);
     if (winner) {

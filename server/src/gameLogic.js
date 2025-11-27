@@ -84,29 +84,16 @@ export function nextAliveIndex(lobby, startIndex) {
 }
 
 export function isTruthfulPlay(cards, tableRank) {
-  return cards.every(c => c.r === tableRank);
+  return cards.every(c => c.r === tableRank || c.r === "JOKER");
 }
 
 // MVP: simple rotation among A/K/Q
 export function pickNextTableRank(currentRank) {
-  const ranks = ["A", "K", "Q"];
+  const ranks = ["A", "K", "Q", "J"];
   const idx = ranks.indexOf(currentRank);
   return ranks[(idx + 1) % ranks.length];
 }
 
-// If a player empties hand, draw new hand from remainingDeck.
-export function drawIfEmpty(lobby, socketId, handSize = 5) {
-  const p = lobby.players.find(x => x.socketId === socketId);
-  if (!p || p.hand.length > 0) return;
-
-  const deck = lobby.game.remainingDeck;
-  if (!deck || deck.length === 0) return;
-
-  const drawCount = Math.min(handSize, deck.length);
-  p.hand.push(...deck.splice(0, drawCount));
-
-  lobby.game.deckCount = deck.length;
-}
 
 export function checkWinner(lobby) {
   const alive = lobby.players.filter(p => p.connected && p.lives > 0);
