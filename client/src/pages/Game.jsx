@@ -3,8 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { socket } from "../socket";
 import CardView from "../components/CardView.jsx";
 
-const RANK_CYCLE = ["A", "K", "Q", "J"];
-const nextRankOf = (r) => RANK_CYCLE[(RANK_CYCLE.indexOf(r) + 1) % RANK_CYCLE.length];
+const RANKS = ["A", "K", "Q", "J"];
 
 export default function Game() {
   const { id } = useParams();
@@ -14,10 +13,9 @@ export default function Game() {
   const [hand, setHand] = useState([]);
   const [selected, setSelected] = useState([]);
 
-  // modal + toasts
-  const [roundModal, setRoundModal] = useState(null); // {result, liar, challenger, loser, loserLives, previousRank, nextRank}
+  const [roundModal, setRoundModal] = useState(null);
   const [toasts, setToasts] = useState([]);
-  const nextRankRef = useRef(null);
+  const dismissTimerRef = useRef(null);
 
   const myName =
     localStorage.getItem(`liarsbar:name:${id}`) ||
@@ -31,22 +29,21 @@ export default function Game() {
     socket.on("game:update", onGameUpdate);
     socket.on("hand:update", onHandUpdate);
 
-    // NEW events
     socket.on("round:summary", (summary) => {
-      const nextRank = nextRankRef.current || nextRankOf(summary.previousRank);
-      setRoundModal({ ...summary, nextRank });
+      setRoundModal(summary);
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
 
-      // auto dismiss after 2.2s
-      setTimeout(() => setRoundModal(null), 2200);
-    });
-
-    socket.on("round:nextRank", ({ rank }) => {
-      nextRankRef.current = rank;
+      dismissTimerRef.current = setTimeout(() => {
+        setRoundModal(null);
+      }, 2200);
     });
 
     socket.on("system:log", (evt) => {
       if (evt.type === "hand:refill") {
         pushToast(`${evt.name} refilled hand (${evt.count})`);
+      }
+      if (evt.type === "round:rankChosen") {
+        pushToast(`${evt.by} chose rank ${evt.rank}`);
       }
     });
 
@@ -56,8 +53,8 @@ export default function Game() {
       socket.off("game:update", onGameUpdate);
       socket.off("hand:update", onHandUpdate);
       socket.off("round:summary");
-      socket.off("round:nextRank");
       socket.off("system:log");
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
     };
   }, [id, myName]);
 
@@ -98,9 +95,7 @@ export default function Game() {
           <div style={{ fontSize: 26, fontWeight: 900, color: "var(--accent)" }}>
             {game.winner}
           </div>
-
           <hr className="sep" />
-
           <button onClick={() => navigate(`/lobby/${id}`)}>
             Back to Lobby
           </button>
@@ -125,14 +120,25 @@ export default function Game() {
     responder &&
     (responder.socketId === socket.id || responder.name === myName);
 
+  const isChoosingRank = game.phase === "chooseRank";
+  const canChooseRank = isChoosingRank && isMyTurn && !isSpectator;
+
+  const chooseRank = (rank) => {
+    if (!canChooseRank) return;
+    socket.emit("round:chooseRank", { lobbyId: id, rank }, (res) => {
+      if (res?.error) alert(res.error);
+    });
+  };
+
   const toggleCard = (cardId) => {
-    if (!isMyTurn) return;
+    if (!isMyTurn || isChoosingRank) return;
     setSelected(prev =>
       prev.includes(cardId) ? prev.filter(x => x !== cardId) : [...prev, cardId]
     );
   };
 
   const playSelected = () => {
+    if (isChoosingRank) return alert("Choose the table rank first.");
     if (!isMyTurn) return alert("Not your turn");
     if (selected.length < 1 || selected.length > 3)
       return alert("Select 1–3 cards");
@@ -159,41 +165,52 @@ export default function Game() {
     });
   };
 
-  const currentRank = game.tableRank;
-  const predictedNextRank = nextRankRef.current || nextRankOf(currentRank);
-
   return (
     <div className="container" style={{ position: "relative" }}>
-      {/* Round result modal */}
-      {roundModal && (
-        <RoundModal modal={roundModal} />
-      )}
+      {roundModal && <RoundModal modal={roundModal} />}
 
-      {/* Small toast lane */}
       <div style={{ position: "fixed", top: 16, right: 16, display: "grid", gap: 8, zIndex: 50 }}>
         {toasts.map(t => (
-          <div
-            key={t.id}
-            className="panel-soft"
-            style={{
-              padding: "8px 10px",
-              fontWeight: 800,
-              fontSize: 13,
-              borderColor: "var(--border-strong)"
-            }}
-          >
+          <div key={t.id} className="panel-soft" style={{ padding: "8px 10px", fontWeight: 800, fontSize: 13 }}>
             {t.text}
           </div>
         ))}
       </div>
 
-      {/* Spectator banner */}
       {isSpectator && (
-        <div className="panel-soft" style={{ padding: 10, marginBottom: 12, borderColor: "var(--border-strong)" }}>
+        <div className="panel-soft" style={{ padding: 10, marginBottom: 12 }}>
           <b>Spectating</b>
           <span className="muted" style={{ marginLeft: 8 }}>
-            You joined mid-game. You can watch this round and play next match.
+            You joined mid-game. You can watch this match and play next one.
           </span>
+        </div>
+      )}
+
+      {/* CHOOSE-RANK PANEL */}
+      {isChoosingRank && (
+        <div className="panel" style={{ padding: 14, marginBottom: 12, borderColor: "var(--border-strong)" }}>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>
+            Round starting — choose table rank
+          </div>
+
+          <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+            {canChooseRank
+              ? "Pick the rank everyone must claim this round."
+              : `Waiting for ${currentPlayer?.name} to choose the rank...`}
+          </div>
+
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            {RANKS.map(r => (
+              <button
+                key={r}
+                onClick={() => chooseRank(r)}
+                disabled={!canChooseRank}
+                style={{ minWidth: 60 }}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -201,10 +218,10 @@ export default function Game() {
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
         <StatusBox title="Table Rank">
           <div style={{ fontSize: 28, fontWeight: 900, color: "var(--accent)" }}>
-            {currentRank}
+            {game.tableRank ?? "—"}
           </div>
           <div className="muted">
-            Next rank after this round: <b style={{ color: "var(--text)" }}>{predictedNextRank}</b>
+            {isChoosingRank ? "Rank not chosen yet" : `Everyone claims ${game.tableRank}`}
           </div>
         </StatusBox>
 
@@ -214,7 +231,9 @@ export default function Game() {
             {currentPlayer?.name === myName ? " (you)" : ""}
           </div>
           <div style={{ color: isMyTurn ? "var(--accent-2)" : "var(--muted)", fontWeight: 800 }}>
-            {isMyTurn ? "Your turn to play" : "Waiting for play"}
+            {isChoosingRank
+              ? (isMyTurn ? "Choose the rank" : "Waiting for rank selection")
+              : (isMyTurn ? "Your turn to play" : "Waiting for play")}
           </div>
         </StatusBox>
 
@@ -225,7 +244,7 @@ export default function Game() {
                 {game.lastPlay.playerName} declared {game.lastPlay.count}
               </div>
               <div className="muted">
-                claiming {game.lastPlay.count} × {currentRank}
+                claiming {game.lastPlay.count} × {game.tableRank}
               </div>
             </>
           ) : (
@@ -238,7 +257,6 @@ export default function Game() {
       <div className="grid" style={{ gridTemplateColumns: "2fr 1fr" }}>
         <div>
           <h3 className="h3" style={{ margin: "6px 0" }}>Active Players</h3>
-
           <div className="grid">
             {game.players
               .filter(p => p.connected && p.lives > 0)
@@ -260,18 +278,9 @@ export default function Game() {
                   >
                     <div>
                       <b>{p.name}</b>
-                      {isTurn && (
-                        <span className="badge" style={{ marginLeft: 8, borderColor: "var(--border-strong)" }}>
-                          playing
-                        </span>
-                      )}
-                      {isNext && !isTurn && (
-                        <span className="badge" style={{ marginLeft: 8 }}>
-                          responder
-                        </span>
-                      )}
+                      {isTurn && <span className="badge" style={{ marginLeft: 8 }}>playing</span>}
+                      {isNext && !isTurn && <span className="badge" style={{ marginLeft: 8 }}>responder</span>}
                     </div>
-
                     <div className="muted" style={{ fontSize: 13 }}>
                       lives <b style={{ color: "var(--text)" }}>{p.lives}</b> · cards {p.cardsCount}
                     </div>
@@ -284,7 +293,6 @@ export default function Game() {
         <div>
           <h3 className="h3" style={{ margin: "6px 0" }}>Pile</h3>
           <PileStack count={game.pileSize ?? 0} />
-
           <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
             Deck remaining: {game.deckCount}
           </div>
@@ -301,9 +309,9 @@ export default function Game() {
           </div>
         )}
 
-        {isSpectator ? (
+        {isSpectator || isChoosingRank ? (
           <div className="muted" style={{ padding: "8px 0" }}>
-            Hand hidden while spectating.
+            {isSpectator ? "Hand hidden while spectating." : "Dealing after rank selection..."}
           </div>
         ) : (
           <>
@@ -328,12 +336,8 @@ export default function Game() {
 
               {isResponder && game.lastPlay && (
                 <>
-                  <button className="secondary" onClick={acceptPlay}>
-                    Accept
-                  </button>
-                  <button className="danger" onClick={challengePlay}>
-                    Call Liar
-                  </button>
+                  <button className="secondary" onClick={acceptPlay}>Accept</button>
+                  <button className="danger" onClick={challengePlay}>Call Liar</button>
                 </>
               )}
 
@@ -368,16 +372,7 @@ function PileStack({ count }) {
   const offsets = [0, 6, 12, 18];
 
   return (
-    <div
-      className="panel-soft"
-      style={{
-        padding: 12,
-        minHeight: 150,
-        position: "relative",
-        display: "grid",
-        placeItems: "center"
-      }}
-    >
+    <div className="panel-soft" style={{ padding: 12, minHeight: 150, position: "relative", display: "grid", placeItems: "center" }}>
       <div style={{ position: "relative", width: 90, height: 120 }}>
         {Array.from({ length: visible }).map((_, i) => (
           <div
@@ -396,16 +391,7 @@ function PileStack({ count }) {
         ))}
       </div>
 
-      <div
-        className="badge"
-        style={{
-          position: "absolute",
-          bottom: 10,
-          right: 10,
-          fontWeight: 900,
-          borderColor: "var(--border-strong)"
-        }}
-      >
+      <div className="badge" style={{ position: "absolute", bottom: 10, right: 10, fontWeight: 900 }}>
         +{count}
       </div>
     </div>
@@ -416,25 +402,8 @@ function RoundModal({ modal }) {
   const isLiar = modal.result === "liar";
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        display: "grid",
-        placeItems: "center",
-        background: "rgba(0,0,0,0.45)",
-        zIndex: 100
-      }}
-    >
-      <div
-        className="panel"
-        style={{
-          padding: "22px 26px",
-          width: "min(540px, 92vw)",
-          textAlign: "center",
-          animation: "pop .18s ease-out"
-        }}
-      >
+    <div style={{ position: "fixed", inset: 0, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.45)", zIndex: 100 }}>
+      <div className="panel" style={{ padding: "22px 26px", width: "min(540px, 92vw)", textAlign: "center", animation: "pop .18s ease-out" }}>
         <div
           style={{
             fontSize: 54,
@@ -457,19 +426,13 @@ function RoundModal({ modal }) {
           {modal.loser} loses a life • lives left: {modal.loserLives}
         </div>
 
-        <hr className="sep" />
-
-        <div style={{ fontWeight: 800 }}>
-          Next Rank: <span style={{ color: "var(--accent)" }}>{modal.nextRank}</span>
-        </div>
+        <style>{`
+          @keyframes pop {
+            from { transform: scale(.94); opacity: .6; }
+            to   { transform: scale(1); opacity: 1; }
+          }
+        `}</style>
       </div>
-
-      <style>{`
-        @keyframes pop {
-          from { transform: scale(.94); opacity: .6; }
-          to   { transform: scale(1); opacity: 1; }
-        }
-      `}</style>
     </div>
   );
 }

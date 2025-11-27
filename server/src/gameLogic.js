@@ -1,15 +1,12 @@
 // server/src/gameLogic.js
 
-// ---------- Deck / shuffle / deal ----------
-
 export function buildDeck(numPlayers) {
-  // 1 deck per 4 players
   const decksToUse = Math.ceil(numPlayers / 4);
-
   const suits = ["S", "H", "D", "C"];
   const ranks = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 
   const deck = [];
+
   for (let d = 0; d < decksToUse; d++) {
     for (const r of ranks) {
       for (const s of suits) {
@@ -20,110 +17,100 @@ export function buildDeck(numPlayers) {
         });
       }
     }
-  }
-  return deck;
-}
 
-export function shuffle(array) {
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-  return array;
-}
-
-export function dealHands(deck, players, handSize = 5) {
-  const hands = new Map(); // socketId -> cards[]
-  for (const p of players) hands.set(p.socketId, []);
-
-  let idx = 0;
-  for (let c = 0; c < handSize; c++) {
-    for (const p of players) {
-      hands.get(p.socketId).push(deck[idx++]);
+    // 2 Jokers per deck
+    for (let j = 0; j < 2; j++) {
+      deck.push({
+        r: "JOKER",
+        s: "JOKER",
+        id: `JOKER-${d}-${j}-${Math.random().toString(36).slice(2, 8)}`
+      });
     }
   }
 
-  return {
-    hands,
-    remainingDeck: deck.slice(idx)
-  };
+  return deck;
 }
 
-// ---------- Game init ----------
+export function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
-export function makeInitialGameState(lobby, remainingDeck) {
+export function dealHands(deck, players, handSize = 5) {
+  const hands = new Map();
+  let idx = 0;
+
+  for (const p of players) {
+    const h = [];
+    for (let i = 0; i < handSize && idx < deck.length; i++) {
+      h.push(deck[idx++]);
+    }
+    hands.set(p.socketId, h);
+  }
+
+  return { hands, remainingDeck: deck.slice(idx) };
+}
+
+export function makeInitialGameState(lobby) {
   return {
     lobbyId: lobby.id,
-    state: "playing",
-    tableRank: "A",
-    turnIndex: 0,
+    state: "playing",          // overall match state
+    phase: "chooseRank",       // "chooseRank" | "round"
+    tableRank: null,           // chosen per round
+    turnIndex: 0,              // current player (chooser at phase start)
     responderIndex: null,
-    direction: 1,
+
     pile: [],
     lastPlay: null,
-    remainingDeck,
-    deckCount: remainingDeck.length,
+
+    remainingDeck: [],
+    deckCount: 0,
+
     winner: null
   };
 }
 
-// ---------- Turn helpers ----------
-
 export function nextAliveIndex(lobby, startIndex) {
   const players = lobby.players;
   const n = players.length;
-  const dir = lobby.game.direction;
 
-  let i = startIndex;
-  for (let step = 0; step < n; step++) {
-    i = (i + dir + n) % n;
+  for (let step = 1; step <= n; step++) {
+    const i = (startIndex + step) % n;
     const p = players[i];
     if (p.connected && p.lives > 0) return i;
   }
   return startIndex;
 }
 
-export function isTruthfulPlay(cards, tableRank) {
-  return cards.every(c => c.r === tableRank || c.r === "JOKER");
+// Jokers are always truthful
+export function isTruthfulPlay(cards, roundRank) {
+  return cards.every(c => c.r === roundRank || c.r === "JOKER");
 }
-
-// MVP: simple rotation among A/K/Q
-export function pickNextTableRank(currentRank) {
-  const ranks = ["A", "K", "Q", "J"];
-  const idx = ranks.indexOf(currentRank);
-  return ranks[(idx + 1) % ranks.length];
-}
-
 
 export function checkWinner(lobby) {
-  const alive = lobby.players.filter(p => p.connected && p.lives > 0);
-  if (alive.length <= 1) {
-    lobby.state = "ended";
-    lobby.game.state = "ended";
-    lobby.game.winner = alive[0]?.name || "No one";
-    return alive[0] || null;
-  }
-  return null;
+  const alive = lobby.players.filter(p => p.lives > 0);
+  return alive.length === 1 ? alive[0] : null;
 }
 
-// Public snapshot for clients (derived fresh every emit).
 export function publicSnapshot(lobby) {
   const g = lobby.game;
-
   return {
     lobbyId: g.lobbyId,
     state: g.state,
+    phase: g.phase,
+    hostSocketId: lobby.hostSocketId,
+
     tableRank: g.tableRank,
     turnIndex: g.turnIndex,
     responderIndex: g.responderIndex,
-    direction: g.direction,
 
     pileSize: g.pile.length,
     lastPlay: g.lastPlay
-      ? {
-          playerName: g.lastPlay.playerName,
-          count: g.lastPlay.count
-        }
+      ? { playerName: g.lastPlay.playerName, count: g.lastPlay.count }
       : null,
 
     deckCount: g.deckCount,
