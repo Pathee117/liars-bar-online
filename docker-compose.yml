@@ -1,22 +1,32 @@
+version: "3.9"
+
 services:
   server:
-    build: ./server
-    ports:
-      - "3001:3001"
-    volumes:
-      - ./server:/app
-      - /app/node_modules
+    container_name: liars-bar-online-server
+    build:
+      context: ./server
+      dockerfile: Dockerfile
     environment:
+      - NODE_ENV=production
       - PORT=3001
+    ports:
+      # If you want server PUBLIC (not required once nginx proxies):
+      - "3001:3001"
+      # If you want server PRIVATE (recommended once nginx works), use instead:
+      # - "127.0.0.1:3001:3001"
+    restart: unless-stopped
 
   client:
-    build: ./client
+    container_name: liars-bar-online-client
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        # Your public domain (HTTPS)
+        VITE_SERVER_URL: "https://liars-bar.patheex.dev"
     ports:
-      - "5173:5173"
-    volumes:
-      - ./client:/app
-      - /app/node_modules
-    environment:
-      - VITE_SERVER_URL=http://localhost:3001
+      # Only expose to localhost; host nginx will proxy to it
+      - "127.0.0.1:8080:80"
     depends_on:
       - server
+    restart: unless-stopped
