@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  server:
+    build: ./server
+    command: npm run dev
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    ports:
+      - "3001:3001"
+
+  client:
+    build:
+      context: ./client
+      target: build
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_SERVER_URL=http://localhost:3001
