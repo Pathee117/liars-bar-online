@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { socket } from "../socket";
 import CardView from "../components/CardView.jsx";
+import { VERSION } from "../version";
 
 const RANKS = ["A", "K", "Q", "J"];
 
@@ -23,8 +24,8 @@ export default function Game() {
     "Player";
 
   // desktop detection
-  const [isDesktop, setIsDesktop] = useState(() =>
-    window.matchMedia("(min-width: 900px)").matches
+  const [isDesktop, setIsDesktop] = useState(
+    () => window.matchMedia("(min-width: 900px)").matches
   );
 
   useEffect(() => {
@@ -161,14 +162,12 @@ export default function Game() {
   const isMyTurn =
     isAlive &&
     currentPlayer &&
-    (currentPlayer.socketId === socket.id ||
-      currentPlayer.name === myName);
+    (currentPlayer.socketId === socket.id || currentPlayer.name === myName);
 
   const isResponder =
     isAlive &&
     responder &&
-    (responder.socketId === socket.id ||
-      responder.name === myName);
+    (responder.socketId === socket.id || responder.name === myName);
 
   const isChoosingRank = game.phase === "chooseRank";
   const canChooseRank = isChoosingRank && isMyTurn && !isSpectator;
@@ -283,9 +282,7 @@ export default function Game() {
         />
 
         {/* Desktop right-side rank panel */}
-        {isDesktop && (
-          <RankPanel rank={game.tableRank} />
-        )}
+        {isDesktop && <RankPanel rank={game.tableRank} />}
       </div>
 
       {/* -------- BOTTOM AREA: choose rank OR hand -------- */}
@@ -362,6 +359,22 @@ export default function Game() {
             </div>
           </>
         )}
+      </div>
+
+      <div
+        style={{
+          position: "fixed",
+          bottom: 10,
+          right: 12,
+          fontSize: 11,
+          opacity: 0.6,
+          fontWeight: 800,
+          letterSpacing: 0.5,
+          zIndex: 999,
+          pointerEvents: "none",
+        }}
+      >
+        v{VERSION}
       </div>
     </div>
   );

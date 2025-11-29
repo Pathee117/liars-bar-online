@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useLocation } from "react-router-dom";
 import { socket } from "../socket";
+import { VERSION } from "../version";
 
 export default function Lobby() {
   const { id } = useParams();
@@ -70,10 +71,14 @@ export default function Lobby() {
       <div className="container">
         <div className="panel" style={{ padding: 20 }}>
           <h2 className="h2">Join Lobby</h2>
-          <p className="muted">Lobby code: <b>{id}</b></p>
+          <p className="muted">
+            Lobby code: <b>{id}</b>
+          </p>
 
           <div className="panel-soft" style={{ padding: 14, marginTop: 10 }}>
-            <label className="muted" style={{ fontSize: 13 }}>Your display name</label>
+            <label className="muted" style={{ fontSize: 13 }}>
+              Your display name
+            </label>
             <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
               <input
                 value={name}
@@ -81,7 +86,9 @@ export default function Lobby() {
                 placeholder="Enter name"
                 onKeyDown={(e) => e.key === "Enter" && joinLobby()}
               />
-              <button onClick={joinLobby} style={{ minWidth: 120 }}>Join</button>
+              <button onClick={joinLobby} style={{ minWidth: 120 }}>
+                Join
+              </button>
             </div>
           </div>
         </div>
@@ -92,21 +99,36 @@ export default function Lobby() {
   return (
     <div className="container">
       <div className="panel" style={{ padding: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
           <div>
-            <h2 className="h2" style={{ margin: 0 }}>Lobby</h2>
-            <div className="muted">Code: <b>{id}</b></div>
+            <h2 className="h2" style={{ margin: 0 }}>
+              Lobby
+            </h2>
+            <div className="muted">
+              Code: <b>{id}</b>
+            </div>
           </div>
 
           {isHost && (
-            <button onClick={startGame} style={{ padding: "12px 16px", fontSize: 16 }}>
+            <button
+              onClick={startGame}
+              style={{ padding: "12px 16px", fontSize: 16 }}
+            >
               Start Game
             </button>
           )}
         </div>
 
         <div className="panel-soft" style={{ padding: 12, marginTop: 14 }}>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Invite link</div>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            Invite link
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             <input readOnly value={link} />
             <button
@@ -119,20 +141,32 @@ export default function Lobby() {
           </div>
         </div>
 
-        <h3 className="h3" style={{ marginTop: 16 }}>Players</h3>
+        <h3 className="h3" style={{ marginTop: 16 }}>
+          Players
+        </h3>
 
         {!lobby ? (
           <p className="muted">Loading lobby...</p>
         ) : (
           <div className="grid">
             {lobby.players
-              .filter(p => p.connected)  // keep clean list
+              .filter((p) => p.connected) // keep clean list
               .map((p) => (
-                <div key={p.socketId} className="panel-soft" style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between" }}>
+                <div
+                  key={p.socketId}
+                  className="panel-soft"
+                  style={{
+                    padding: "10px 12px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                  }}
+                >
                   <div>
                     <b>{p.name}</b>
                     {p.socketId === lobby.hostSocketId && (
-                      <span className="badge" style={{ marginLeft: 8 }}>Host</span>
+                      <span className="badge" style={{ marginLeft: 8 }}>
+                        Host
+                      </span>
                     )}
                   </div>
                   <div className="muted">connected</div>
@@ -146,6 +180,22 @@ export default function Lobby() {
             Waiting for host to start the game…
           </div>
         )}
+      </div>
+
+      <div
+        style={{
+          position: "fixed",
+          bottom: 10,
+          right: 12,
+          fontSize: 11,
+          opacity: 0.6,
+          fontWeight: 800,
+          letterSpacing: 0.5,
+          zIndex: 999,
+          pointerEvents: "none",
+        }}
+      >
+        v{VERSION}
       </div>
     </div>
   );
