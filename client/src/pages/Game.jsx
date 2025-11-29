@@ -60,6 +60,9 @@ export default function Game() {
       if (evt.type === "player:survived") {
         pushToast(`${evt.name} survived.`);
       }
+      if (evt.type === "round:playerOut") {
+        pushToast(`${evt.name} emptied their hand. Safe this round.`);
+      }
     });
 
     socket.emit("lobby:join", { lobbyId: id, name: myName });
@@ -361,6 +364,7 @@ export default function Game() {
         )}
       </div>
 
+      {/* Version badge bottom-right */}
       <div
         style={{
           position: "fixed",
@@ -647,6 +651,9 @@ function makeSeatCoords(n) {
 
 function RoundModal({ modal }) {
   const isLiar = modal.result === "liar";
+  const isPlayerOut = modal.result === "playerOut";
+  const safeName = modal.winnerSafe;
+
   return (
     <div
       style={{
@@ -667,25 +674,48 @@ function RoundModal({ modal }) {
           animation: "pop .18s ease-out",
         }}
       >
-        <div
-          style={{
-            fontSize: 50,
-            fontWeight: 1000,
-            letterSpacing: 1,
-            color: isLiar ? "var(--danger)" : "var(--accent-2)",
-          }}
-        >
-          {isLiar ? "LIAR!" : "TRUTH!"}
-        </div>
+        {isPlayerOut ? (
+          <>
+            <div
+              style={{
+                fontSize: 48,
+                fontWeight: 1000,
+                letterSpacing: 1,
+                color: "var(--accent-2)",
+              }}
+            >
+              SAFE!
+            </div>
+            <div style={{ marginTop: 8, fontWeight: 900 }}>
+              {safeName} emptied their hand
+            </div>
+            <div className="muted" style={{ marginTop: 6 }}>
+              Round ends immediately. Next chooser rotates.
+            </div>
+          </>
+        ) : (
+          <>
+            <div
+              style={{
+                fontSize: 50,
+                fontWeight: 1000,
+                letterSpacing: 1,
+                color: isLiar ? "var(--danger)" : "var(--accent-2)",
+              }}
+            >
+              {isLiar ? "LIAR!" : "TRUTH!"}
+            </div>
 
-        <div style={{ marginTop: 8, fontWeight: 800 }}>
-          {modal.challenger} challenged {modal.liar}
-        </div>
+            <div style={{ marginTop: 8, fontWeight: 800 }}>
+              {modal.challenger} challenged {modal.liar}
+            </div>
 
-        <div className="muted" style={{ marginTop: 6 }}>
-          {modal.loser} pulled the trigger…{" "}
-          {modal.died ? "and died." : "and survived."}
-        </div>
+            <div className="muted" style={{ marginTop: 6 }}>
+              {modal.loser} pulled the trigger…{" "}
+              {modal.died ? "and died." : "and survived."}
+            </div>
+          </>
+        )}
       </div>
 
       <style>{`

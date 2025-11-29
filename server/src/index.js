@@ -68,7 +68,9 @@ io.on("connection", (socket) => {
     socket.join(lobbyId);
 
     if (lobby.state === "playing") {
-      const existing = lobby.players.find(p => p.name === trimmed && !p.connected);
+      const existing = lobby.players.find(
+        (p) => p.name === trimmed && !p.connected
+      );
       if (existing) {
         existing.socketId = socket.id;
         existing.connected = true;
@@ -88,7 +90,7 @@ io.on("connection", (socket) => {
       return cb?.({ ok: true, spectating: true });
     }
 
-    const connectedCount = lobby.players.filter(p => p.connected).length;
+    const connectedCount = lobby.players.filter((p) => p.connected).length;
     if (connectedCount >= 8) return cb?.({ error: "Lobby is full (8 max)" });
 
     const updated = addPlayer(lobbyId, socket.id, trimmed);
@@ -111,7 +113,7 @@ io.on("connection", (socket) => {
     if (lobby.state !== "lobby")
       return cb?.({ error: "Game already started" });
 
-    const connectedPlayers = lobby.players.filter(p => p.connected);
+    const connectedPlayers = lobby.players.filter((p) => p.connected);
     if (connectedPlayers.length < 2 || connectedPlayers.length > 8)
       return cb?.({ error: "Need 2–8 players" });
 
@@ -119,13 +121,13 @@ io.on("connection", (socket) => {
     lobby.game = makeInitialGameState(lobby);
 
     // reset match data on players
-    lobby.players.forEach(p => {
-      p.alive = true;             // NEW (replaces lives)
+    lobby.players.forEach((p) => {
+      p.alive = true; // replaces lives
       p.hand = [];
-      p.revolver = newRevolver(); // NEW
+      p.revolver = newRevolver();
     });
 
-    let firstAlive = lobby.players.findIndex(p => p.connected && p.alive);
+    let firstAlive = lobby.players.findIndex((p) => p.connected && p.alive);
     if (firstAlive === -1) firstAlive = 0;
 
     lobby.game.turnIndex = firstAlive;
@@ -135,7 +137,7 @@ io.on("connection", (socket) => {
     io.to(lobby.id).emit("lobby:update", lobby);
     io.to(lobby.id).emit("system:log", {
       type: "game:started",
-      by: lobby.players.find(p => p.socketId === socket.id)?.name || "Host"
+      by: lobby.players.find((p) => p.socketId === socket.id)?.name || "Host"
     });
 
     io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
@@ -155,19 +157,20 @@ io.on("connection", (socket) => {
     if (!chooser || chooser.socketId !== socket.id)
       return cb?.({ error: "Only current player can choose rank" });
 
-    const allowed = new Set(["A", "K", "Q"]);
+    // Allow A,K,Q,J
+    const allowed = new Set(["A", "K", "Q", "J"]);
     if (!allowed.has(rank))
       return cb?.({ error: "Invalid rank" });
 
     g.tableRank = rank;
     g.phase = "round";
 
-    const active = lobby.players.filter(p => p.connected && p.alive);
+    const active = lobby.players.filter((p) => p.connected && p.alive);
 
     const deck = shuffle(buildDeck(active.length));
     const { hands, remainingDeck } = dealHands(deck, active, 5);
 
-    active.forEach(p => {
+    active.forEach((p) => {
       p.hand = hands.get(p.socketId) || [];
       io.to(p.socketId).emit("hand:update", p.hand);
     });
@@ -206,12 +209,57 @@ io.on("connection", (socket) => {
 
     const cardsToPlay = [];
     for (const id of cardIds) {
-      const idx = current.hand.findIndex(c => c.id === id);
+      const idx = current.hand.findIndex((c) => c.id === id);
       if (idx === -1) return cb?.({ error: "Card not in hand" });
       cardsToPlay.push(current.hand[idx]);
     }
 
-    current.hand = current.hand.filter(c => !cardIds.includes(c.id));
+    // Remove from hand
+    current.hand = current.hand.filter((c) => !cardIds.includes(c.id));
+
+    // -------- NEW SAFE-ROUND RULE --------
+    // If player empties their hand, round ends immediately.
+    if (current.hand.length === 0) {
+      io.to(lobby.id).emit("system:log", {
+        type: "round:playerOut",
+        name: current.name
+      });
+
+      io.to(lobby.id).emit("round:summary", {
+        result: "playerOut",
+        winnerSafe: current.name,
+        previousRank: g.tableRank
+      });
+
+      // clear round state
+      g.pile = [];
+      g.lastPlay = null;
+      g.responderIndex = null;
+
+      // next chooser is next alive after current
+      g.turnIndex = nextAliveIndex(lobby, g.turnIndex);
+
+      // reset for next round
+      g.phase = "chooseRank";
+      g.tableRank = null;
+
+      const winner = checkWinner(lobby);
+      if (winner) {
+        g.state = "ended";
+        g.winner = winner.name;
+        io.to(lobby.id).emit("system:log", {
+          type: "game:ended",
+          winner: winner.name
+        });
+      }
+
+      io.to(current.socketId).emit("hand:update", current.hand);
+      io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
+      return cb?.({ ok: true, emptied: true });
+    }
+    // ------------------------------------
+
+    // Normal round play continues
     g.pile.push(...cardsToPlay);
 
     g.lastPlay = {
@@ -266,7 +314,7 @@ io.on("connection", (socket) => {
     const last = g.lastPlay;
     if (!last) return cb?.({ error: "Nothing to challenge" });
 
-    const liar = lobby.players.find(p => p.socketId === last.playerSocketId);
+    const liar = lobby.players.find((p) => p.socketId === last.playerSocketId);
     if (!liar) return cb?.({ error: "Player not found" });
 
     const truthful = isTruthfulPlay(last.cards, g.tableRank);
