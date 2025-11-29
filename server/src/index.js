@@ -15,7 +15,7 @@ import {
   publicSnapshot,
   checkWinner,
   newRevolver,
-  pullTrigger
+  pullTrigger,
 } from "./gameLogic.js";
 
 const app = express();
@@ -28,6 +28,133 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 io.on("connection", (socket) => {
   console.log("connected:", socket.id);
+
+  /* ------------------------------------------------------------------ */
+  /*                               GUN FLOW                             */
+  /* ------------------------------------------------------------------ */
+
+  // First penalty only: spin to (re)load cylinder. DOES NOT FIRE.
+  socket.on("gun:spin", ({ lobbyId }, cb) => {
+    const lobby = getLobby(lobbyId);
+    if (!lobby || lobby.state !== "playing")
+      return cb?.({ error: "No active game" });
+
+    const g = lobby.game;
+    if (g.phase !== "gun" || !g.pendingGunFor || !g.pendingGunMeta)
+      return cb?.({ error: "No gun pending" });
+
+    if (socket.id !== g.pendingGunFor)
+      return cb?.({ error: "Not your gun to spin" });
+
+    const loser = lobby.players.find((p) => p.socketId === g.pendingGunFor);
+    if (!loser) return cb?.({ error: "Player not found" });
+
+    // Only allowed on first penalty (no revolver yet)
+    if (loser.revolver)
+      return cb?.({ error: "Already loaded. No spin on later penalties." });
+
+    // Create fresh revolver with random bullet chamber
+    const rev = newRevolver();
+    // Ensure first FIRE can hit any chamber (because pullTrigger increments first)
+    rev.chamberIndex = 5;
+    loser.revolver = rev;
+
+    io.to(lobby.id).emit("gun:spun", {
+      loserName: loser.name,
+    });
+
+    cb?.({ ok: true });
+  });
+
+  // Fire one chamber. If no bullet => click, if bullet => shot and death.
+  socket.on("gun:fire", ({ lobbyId }, cb) => {
+    const lobby = getLobby(lobbyId);
+    if (!lobby || lobby.state !== "playing")
+      return cb?.({ error: "No active game" });
+
+    const g = lobby.game;
+    if (g.phase !== "gun" || !g.pendingGunFor || !g.pendingGunMeta)
+      return cb?.({ error: "No gun pending" });
+
+    if (socket.id !== g.pendingGunFor)
+      return cb?.({ error: "Not your gun to fire" });
+
+    const loser = lobby.players.find((p) => p.socketId === g.pendingGunFor);
+    if (!loser) return cb?.({ error: "Player not found" });
+
+    if (!loser.revolver)
+      return cb?.({ error: "Spin required before first fire" });
+
+    const shot = pullTrigger(loser.revolver);
+
+    if (shot.died) {
+      loser.alive = false;
+      loser.hand = [];
+    }
+
+    // Visual result for all clients (they decide click vs shot sound)
+    io.to(lobby.id).emit("gun:result", {
+      loserName: loser.name,
+      fired: shot.fired,
+      died: shot.died,
+    });
+
+    const meta = g.pendingGunMeta;
+
+    // Round summary after the FIRE
+    io.to(lobby.id).emit("round:summary", {
+      result: meta.result === "liar" ? "liar" : "truth",
+      liar: meta.liarName,
+      challenger: meta.challengerName,
+      loser: meta.loserName,
+      previousRank: meta.previousRank,
+      shotFired: shot.fired,
+      died: shot.died,
+      diedName: shot.died ? loser.name : null,
+    });
+
+    io.to(lobby.id).emit("system:log", {
+      type: shot.died ? "player:died" : "player:survived",
+      name: loser.name,
+    });
+
+    // Reset for next round
+    g.pile = [];
+    g.lastPlay = null;
+    g.responderIndex = null;
+
+    // Next chooser is the responder from the challenge (baseline rule)
+    const responder = lobby.players.find(
+      (p) => p.socketId === meta.challengerSocketId
+    );
+    g.turnIndex = responder
+      ? lobby.players.indexOf(responder)
+      : nextAliveIndex(lobby, g.turnIndex);
+
+    g.phase = "chooseRank";
+    g.tableRank = null;
+
+    // Clear pending gun
+    g.pendingGunFor = null;
+    g.pendingGunMeta = null;
+
+    const winner = checkWinner(lobby);
+    if (winner) {
+      g.state = "ended";
+      g.winner = winner.name;
+      io.to(lobby.id).emit("system:log", {
+        type: "game:ended",
+        winner: winner.name,
+      });
+    }
+
+    io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
+    cb?.({ ok: true, died: shot.died });
+  });
+
+  /* ------------------------------------------------------------------ */
+  /*                            DISCONNECT                              */
+  /* ------------------------------------------------------------------ */
 
   socket.on("disconnect", () => {
     const lobby = removePlayer(socket.id);
@@ -47,6 +174,10 @@ io.on("connection", (socket) => {
 
   socket.on("ping", (msg) => socket.emit("pong", { msg, at: Date.now() }));
 
+  /* ------------------------------------------------------------------ */
+  /*                              LOBBIES                               */
+  /* ------------------------------------------------------------------ */
+
   socket.on("lobby:create", ({ name }, cb) => {
     const lobby = createLobby(socket.id, (name || "Player").trim());
     socket.join(lobby.id);
@@ -54,7 +185,7 @@ io.on("connection", (socket) => {
     io.to(lobby.id).emit("lobby:update", lobby);
     io.to(lobby.id).emit("system:log", {
       type: "lobby:created",
-      name: lobby.players[0].name
+      name: lobby.players[0].name,
     });
 
     cb?.({ lobbyId: lobby.id });
@@ -78,7 +209,7 @@ io.on("connection", (socket) => {
         io.to(lobbyId).emit("lobby:update", lobby);
         io.to(lobbyId).emit("system:log", {
           type: "player:reconnected",
-          name: trimmed
+          name: trimmed,
         });
 
         io.to(socket.id).emit("game:update", publicSnapshot(lobby));
@@ -98,20 +229,23 @@ io.on("connection", (socket) => {
 
     io.to(lobbyId).emit("system:log", {
       type: "player:connected",
-      name: trimmed
+      name: trimmed,
     });
 
     cb?.({ ok: true });
   });
 
-  // Start game: everyone gets a fresh revolver, no dealing until rank chosen
+  /* ------------------------------------------------------------------ */
+  /*                             GAME START                             */
+  /* ------------------------------------------------------------------ */
+
+  // Start game: NO revolvers preloaded. Guns appear only on first penalty.
   socket.on("game:start", ({ lobbyId }, cb) => {
     const lobby = getLobby(lobbyId);
     if (!lobby) return cb?.({ error: "Lobby not found" });
     if (lobby.hostSocketId !== socket.id)
       return cb?.({ error: "Only host can start" });
-    if (lobby.state !== "lobby")
-      return cb?.({ error: "Game already started" });
+    if (lobby.state !== "lobby") return cb?.({ error: "Game already started" });
 
     const connectedPlayers = lobby.players.filter((p) => p.connected);
     if (connectedPlayers.length < 2 || connectedPlayers.length > 8)
@@ -122,9 +256,9 @@ io.on("connection", (socket) => {
 
     // reset match data on players
     lobby.players.forEach((p) => {
-      p.alive = true; // replaces lives
+      p.alive = true;
       p.hand = [];
-      p.revolver = newRevolver();
+      p.revolver = null; // IMPORTANT: no reload at beginning
     });
 
     let firstAlive = lobby.players.findIndex((p) => p.connected && p.alive);
@@ -133,16 +267,22 @@ io.on("connection", (socket) => {
     lobby.game.turnIndex = firstAlive;
     lobby.game.phase = "chooseRank";
     lobby.game.tableRank = null;
+    lobby.game.pendingGunFor = null;
+    lobby.game.pendingGunMeta = null;
 
     io.to(lobby.id).emit("lobby:update", lobby);
     io.to(lobby.id).emit("system:log", {
       type: "game:started",
-      by: lobby.players.find((p) => p.socketId === socket.id)?.name || "Host"
+      by: lobby.players.find((p) => p.socketId === socket.id)?.name || "Host",
     });
 
     io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
     cb?.({ ok: true });
   });
+
+  /* ------------------------------------------------------------------ */
+  /*                            ROUND SETUP                             */
+  /* ------------------------------------------------------------------ */
 
   socket.on("round:chooseRank", ({ lobbyId, rank }, cb) => {
     const lobby = getLobby(lobbyId);
@@ -159,8 +299,7 @@ io.on("connection", (socket) => {
 
     // Allow A,K,Q,J
     const allowed = new Set(["A", "K", "Q", "J"]);
-    if (!allowed.has(rank))
-      return cb?.({ error: "Invalid rank" });
+    if (!allowed.has(rank)) return cb?.({ error: "Invalid rank" });
 
     g.tableRank = rank;
     g.phase = "round";
@@ -181,12 +320,16 @@ io.on("connection", (socket) => {
     io.to(lobby.id).emit("system:log", {
       type: "round:rankChosen",
       by: chooser.name,
-      rank
+      rank,
     });
 
     io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
     cb?.({ ok: true });
   });
+
+  /* ------------------------------------------------------------------ */
+  /*                                TURNS                               */
+  /* ------------------------------------------------------------------ */
 
   socket.on("turn:play", ({ lobbyId, cardIds, declaredCount }, cb) => {
     const lobby = getLobby(lobbyId);
@@ -194,8 +337,7 @@ io.on("connection", (socket) => {
       return cb?.({ error: "No active game" });
 
     const g = lobby.game;
-    if (g.phase !== "round")
-      return cb?.({ error: "Round not started yet" });
+    if (g.phase !== "round") return cb?.({ error: "Round not started yet" });
 
     const current = lobby.players[g.turnIndex];
     if (!current || current.socketId !== socket.id)
@@ -217,29 +359,24 @@ io.on("connection", (socket) => {
     // Remove from hand
     current.hand = current.hand.filter((c) => !cardIds.includes(c.id));
 
-    // -------- NEW SAFE-ROUND RULE --------
-    // If player empties their hand, round ends immediately.
+    // SAFE-ROUND RULE: empty hand ends the round immediately.
     if (current.hand.length === 0) {
       io.to(lobby.id).emit("system:log", {
         type: "round:playerOut",
-        name: current.name
+        name: current.name,
       });
 
       io.to(lobby.id).emit("round:summary", {
         result: "playerOut",
         winnerSafe: current.name,
-        previousRank: g.tableRank
+        previousRank: g.tableRank,
       });
 
-      // clear round state
       g.pile = [];
       g.lastPlay = null;
       g.responderIndex = null;
 
-      // next chooser is next alive after current
       g.turnIndex = nextAliveIndex(lobby, g.turnIndex);
-
-      // reset for next round
       g.phase = "chooseRank";
       g.tableRank = null;
 
@@ -249,7 +386,7 @@ io.on("connection", (socket) => {
         g.winner = winner.name;
         io.to(lobby.id).emit("system:log", {
           type: "game:ended",
-          winner: winner.name
+          winner: winner.name,
         });
       }
 
@@ -257,7 +394,6 @@ io.on("connection", (socket) => {
       io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
       return cb?.({ ok: true, emptied: true });
     }
-    // ------------------------------------
 
     // Normal round play continues
     g.pile.push(...cardsToPlay);
@@ -266,7 +402,7 @@ io.on("connection", (socket) => {
       playerSocketId: current.socketId,
       playerName: current.name,
       count: declaredCount,
-      cards: cardsToPlay
+      cards: cardsToPlay,
     };
 
     g.responderIndex = nextAliveIndex(lobby, g.turnIndex);
@@ -282,8 +418,7 @@ io.on("connection", (socket) => {
       return cb?.({ error: "No active game" });
 
     const g = lobby.game;
-    if (g.phase !== "round")
-      return cb?.({ error: "Round not started yet" });
+    if (g.phase !== "round") return cb?.({ error: "Round not started yet" });
 
     const responder = lobby.players[g.responderIndex];
     if (!responder || responder.socketId !== socket.id)
@@ -303,8 +438,7 @@ io.on("connection", (socket) => {
       return cb?.({ error: "No active game" });
 
     const g = lobby.game;
-    if (g.phase !== "round")
-      return cb?.({ error: "Round not started yet" });
+    if (g.phase !== "round") return cb?.({ error: "Round not started yet" });
 
     const responder = lobby.players[g.responderIndex];
     if (!responder || responder.socketId !== socket.id)
@@ -318,53 +452,31 @@ io.on("connection", (socket) => {
     if (!liar) return cb?.({ error: "Player not found" });
 
     const truthful = isTruthfulPlay(last.cards, g.tableRank);
-
-    // Loser is either liar or responder
     const loser = truthful ? responder : liar;
     const result = truthful ? "truth" : "liar";
 
-    // Pull trigger on loser’s revolver
-    const shot = pullTrigger(loser.revolver);
-    if (shot.died) {
-      loser.alive = false;
-      loser.hand = [];
-    }
+    // Enter gun phase and wait for client actions
+    g.phase = "gun";
+    g.pendingGunFor = loser.socketId;
 
-    io.to(lobby.id).emit("round:summary", {
-      result: result === "liar" ? "liar" : "truth",
-      liar: liar.name,
-      challenger: responder.name,
-      loser: loser.name,
+    g.pendingGunMeta = {
+      liarSocketId: liar.socketId,
+      liarName: liar.name,
+      challengerSocketId: responder.socketId,
+      challengerName: responder.name,
+      loserSocketId: loser.socketId,
+      loserName: loser.name,
       previousRank: g.tableRank,
-      shotFired: shot.fired,
-      died: shot.died,
-      diedName: shot.died ? loser.name : null
+      result,
+    };
+
+    const canSpin = !loser.revolver; // first penalty only
+
+    io.to(lobby.id).emit("gun:pending", {
+      pendingGunFor: loser.socketId,
+      loserName: loser.name,
+      canSpin,
     });
-
-    io.to(lobby.id).emit("system:log", {
-      type: shot.died ? "player:died" : "player:survived",
-      name: loser.name
-    });
-
-    g.pile = [];
-    g.lastPlay = null;
-    g.responderIndex = null;
-
-    // Next chooser is responder (baseline rule)
-    g.turnIndex = lobby.players.indexOf(responder);
-
-    g.phase = "chooseRank";
-    g.tableRank = null;
-
-    const winner = checkWinner(lobby);
-    if (winner) {
-      g.state = "ended";
-      g.winner = winner.name;
-      io.to(lobby.id).emit("system:log", {
-        type: "game:ended",
-        winner: winner.name
-      });
-    }
 
     io.to(lobby.id).emit("game:update", publicSnapshot(lobby));
     cb?.({ ok: true });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { socket } from "../socket";
 import CardView from "../components/CardView.jsx";
+import RevolverModal from "../components/RevolverModal.jsx";
 import { VERSION } from "../version";
 
 const RANKS = ["A", "K", "Q", "J"];
@@ -17,6 +18,11 @@ export default function Game() {
   const [roundModal, setRoundModal] = useState(null);
   const [toasts, setToasts] = useState([]);
   const dismissTimerRef = useRef(null);
+
+  // --- Gun modal state ---
+  const [gunPending, setGunPending] = useState(null);
+  const [gunResult, setGunResult] = useState(null);
+  // shape: { pendingGunFor, loserName }
 
   const myName =
     localStorage.getItem(`liarsbar:name:${id}`) ||
@@ -65,6 +71,25 @@ export default function Game() {
       }
     });
 
+    // --- gun events ---
+    const onGunPending = (data) => {
+      setGunPending(data);
+      setGunResult(null);
+    };
+    const onGunResult = (data) => {
+      // show tiny toast + close modal after a beat
+      pushToast(
+        data.died
+          ? `${data.loserName} died.`
+          : `${data.loserName} survived.`
+      );
+      setGunResult({ died: data.died });
+      setTimeout(() => setGunPending(null), 700);
+    };
+
+    socket.on("gun:pending", onGunPending);
+    socket.on("gun:result", onGunResult);
+
     socket.emit("lobby:join", { lobbyId: id, name: myName });
 
     return () => {
@@ -72,6 +97,8 @@ export default function Game() {
       socket.off("hand:update", onHandUpdate);
       socket.off("round:summary");
       socket.off("system:log");
+      socket.off("gun:pending", onGunPending);
+      socket.off("gun:result", onGunResult);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
     };
   }, [id, myName]);
@@ -219,6 +246,20 @@ export default function Game() {
     });
   };
 
+  const fireGun = () => {
+    if (!gunPending) return;
+    socket.emit("gun:fire", { lobbyId: id }, (res) => {
+      if (res?.error) alert(res.error);
+    });
+  };
+
+  const spinGun = () => {
+    if (!gunPending) return;
+    socket.emit("gun:spin", { lobbyId: id }, (res) => {
+      if (res?.error) alert(res.error);
+    });
+  };
+
   return (
     <div
       className="container"
@@ -230,6 +271,17 @@ export default function Game() {
         position: "relative",
       }}
     >
+      {/* Gun modal */}
+      <RevolverModal
+        open={!!gunPending}
+        isMePending={gunPending?.pendingGunFor === socket.id}
+        pendingName={gunPending?.loserName}
+        canSpin={gunPending?.canSpin ?? true}
+        onSpin={spinGun}
+        onFire={fireGun}
+        gunResult={gunResult}
+      />
+
       {roundModal && <RoundModal modal={roundModal} />}
 
       {/* Toast lane */}
@@ -281,10 +333,9 @@ export default function Game() {
           currentPlayer={currentPlayer}
           responder={responder}
           tableRank={game.tableRank}
-          showCenterRank={!isDesktop} // mobile: center rank
+          showCenterRank={!isDesktop}
         />
 
-        {/* Desktop right-side rank panel */}
         {isDesktop && <RankPanel rank={game.tableRank} />}
       </div>
 
@@ -440,7 +491,6 @@ function TableView({
         placeItems: "center",
       }}
     >
-      {/* Vertical smaller oval */}
       <svg
         viewBox="0 0 900 1600"
         preserveAspectRatio="xMidYMid meet"
@@ -464,7 +514,6 @@ function TableView({
         />
       </svg>
 
-      {/* Mobile center rank (minimal) */}
       {showCenterRank && (
         <div
           className="panel-soft"
@@ -495,7 +544,6 @@ function TableView({
         </div>
       )}
 
-      {/* Seats */}
       {ordered.map((p, idx) => {
         const seat = seats[idx];
         const isTurn = p.socketId === currentPlayer?.socketId;

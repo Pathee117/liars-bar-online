@@ -86,7 +86,11 @@ export function makeInitialGameState(lobby, remainingDeck = []) {
     remainingDeck,
     deckCount: remainingDeck.length,
 
-    winner: null
+    winner: null,
+
+    // --- gun / penalty flow ---
+    pendingGunFor: null,        // socketId who must act now
+    pendingChallenge: null      // stores challenge context until gun:fire
   };
 }
 
