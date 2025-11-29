@@ -1,9 +1,21 @@
 // server/src/gameLogic.js
 
+// ---------- Rank rules ----------
+export const RANKS = ["A", "K", "Q", "J"];
+
+export function nextRankOf(rank) {
+  if (!rank) return RANKS[0];
+  const i = RANKS.indexOf(rank);
+  return RANKS[(i + 1) % RANKS.length];
+}
+
+// ---------- Deck ----------
 export function buildDeck(numPlayers) {
+  // 1 full "liars deck" per 4 players (scales 2–8 nicely)
   const decksToUse = Math.ceil(numPlayers / 4);
+
   const suits = ["S", "H", "D", "C"];
-  const ranks = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
+  const ranks = ["A", "K", "Q", "J"];
   const deck = [];
 
   for (let d = 0; d < decksToUse; d++) {
@@ -26,6 +38,7 @@ export function buildDeck(numPlayers) {
       });
     }
   }
+
   return deck;
 }
 
@@ -38,6 +51,7 @@ export function shuffle(arr) {
   return a;
 }
 
+// Deal fixed hand size to each player at round start
 export function dealHands(deck, players, handSize = 5) {
   const hands = new Map();
   let idx = 0;
@@ -53,33 +67,48 @@ export function dealHands(deck, players, handSize = 5) {
   return { hands, remainingDeck: deck.slice(idx) };
 }
 
-export function makeInitialGameState(lobby) {
+// ---------- Game state ----------
+export function makeInitialGameState(lobby, remainingDeck = []) {
   return {
     lobbyId: lobby.id,
     state: "playing",
+
+    // chooseRank happens before cards are used this round
     phase: "chooseRank", // "chooseRank" | "round"
     tableRank: null,
+
     turnIndex: 0,
     responderIndex: null,
 
     pile: [],
     lastPlay: null,
 
-    remainingDeck: [],
-    deckCount: 0,
+    remainingDeck,
+    deckCount: remainingDeck.length,
 
     winner: null
   };
 }
 
-// ---- Revolver helpers ----
-// A 6-chamber revolver with 1 bullet at random position.
-// We advance chamber on each penalty.
+// Reset per-round fields after a challenge resolves
+export function resetForNextRound(lobby) {
+  const g = lobby.game;
+  g.phase = "chooseRank";
+  g.tableRank = null;
+  g.responderIndex = null;
+  g.pile = [];
+  g.lastPlay = null;
+}
+
+// ---------- Revolver helpers ----------
+// Each alive player has their own revolver.
+// 6 chambers, 1 bullet at random position.
 export function newRevolver() {
   const bulletIndex = Math.floor(Math.random() * 6); // 0..5
   return { chamberIndex: 0, bulletIndex };
 }
 
+// Advance chamber and see if bullet fires
 // Returns { fired: boolean, died: boolean }
 export function pullTrigger(revolver) {
   revolver.chamberIndex = (revolver.chamberIndex + 1) % 6;
@@ -87,6 +116,7 @@ export function pullTrigger(revolver) {
   return { fired, died: fired };
 }
 
+// ---------- Turn helpers ----------
 export function nextAliveIndex(lobby, startIndex) {
   const players = lobby.players;
   const n = players.length;
@@ -99,17 +129,26 @@ export function nextAliveIndex(lobby, startIndex) {
   return startIndex;
 }
 
+export function nextResponderIndex(lobby, turnIndex) {
+  return nextAliveIndex(lobby, turnIndex);
+}
+
+// ---------- Truth helpers ----------
 export function isTruthfulPlay(cards, roundRank) {
+  // Jokers are wild for the current rank
   return cards.every(c => c.r === roundRank || c.r === "JOKER");
 }
 
+// ---------- Winner ----------
 export function checkWinner(lobby) {
   const alive = lobby.players.filter(p => p.alive);
   return alive.length === 1 ? alive[0] : null;
 }
 
+// ---------- Public snapshot for clients ----------
 export function publicSnapshot(lobby) {
   const g = lobby.game;
+
   return {
     lobbyId: g.lobbyId,
     state: g.state,
@@ -131,8 +170,8 @@ export function publicSnapshot(lobby) {
     players: lobby.players.map(p => ({
       socketId: p.socketId,
       name: p.name,
-      alive: p.alive,                 // NEW
-      cardsCount: p.hand.length,
+      alive: p.alive,
+      cardsCount: p.hand?.length ?? 0,
       connected: p.connected
     }))
   };

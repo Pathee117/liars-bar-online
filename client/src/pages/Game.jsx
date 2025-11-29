@@ -22,6 +22,18 @@ export default function Game() {
     localStorage.getItem("liarsbar:name") ||
     "Player";
 
+  // desktop detection
+  const [isDesktop, setIsDesktop] = useState(() =>
+    window.matchMedia("(min-width: 900px)").matches
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 900px)");
+    const handler = (e) => setIsDesktop(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
   useEffect(() => {
     const onGameUpdate = (g) => setGame(g);
     const onHandUpdate = (h) => setHand(h);
@@ -32,7 +44,6 @@ export default function Game() {
     socket.on("round:summary", (summary) => {
       setRoundModal(summary);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-
       dismissTimerRef.current = setTimeout(() => {
         setRoundModal(null);
       }, 2200);
@@ -69,17 +80,15 @@ export default function Game() {
     }, 1800);
   }
 
-  // ---------- FIXED identity (alive-model safe) ----------
+  // ---------- identity (alive-model safe) ----------
   const me = useMemo(() => {
     if (!game) return null;
 
-    // 1) socketId match first
     if (socket.id) {
       const bySocket = game.players.find((p) => p.socketId === socket.id);
       if (bySocket) return bySocket;
     }
 
-    // 2) fallback by name, but prefer connected+alive seats
     const sameName = game.players.filter((p) => p.name === myName);
     if (sameName.length === 0) return null;
 
@@ -92,10 +101,9 @@ export default function Game() {
     return sameName[0];
   }, [game, myName]);
 
-  // dead players are spectators too
   const isSpectator = !me || !me.alive;
   const isAlive = me && me.alive;
-  // ------------------------------------------------------
+  // ------------------------------------------------
 
   if (!game) {
     return (
@@ -112,11 +120,7 @@ export default function Game() {
     return (
       <div
         className="container"
-        style={{
-          display: "grid",
-          placeItems: "center",
-          minHeight: "80vh",
-        }}
+        style={{ display: "grid", placeItems: "center", minHeight: "80vh" }}
       >
         <div
           className="panel"
@@ -214,15 +218,24 @@ export default function Game() {
   };
 
   return (
-    <div className="container" style={{ position: "relative" }}>
+    <div
+      className="container"
+      style={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        position: "relative",
+      }}
+    >
       {roundModal && <RoundModal modal={roundModal} />}
 
       {/* Toast lane */}
       <div
         style={{
           position: "fixed",
-          top: 16,
-          right: 16,
+          top: 12,
+          right: 12,
           display: "grid",
           gap: 8,
           zIndex: 50,
@@ -232,20 +245,15 @@ export default function Game() {
           <div
             key={t.id}
             className="panel-soft"
-            style={{
-              padding: "8px 10px",
-              fontWeight: 800,
-              fontSize: 13,
-            }}
+            style={{ padding: "6px 8px", fontWeight: 800, fontSize: 12 }}
           >
             {t.text}
           </div>
         ))}
       </div>
 
-      {/* Spectator / dead banner */}
       {isSpectator && (
-        <div className="panel-soft" style={{ padding: 10, marginBottom: 12 }}>
+        <div className="panel-soft" style={{ padding: 8 }}>
           <b>{me?.alive === false ? "You are dead" : "Spectating"}</b>
           <span className="muted" style={{ marginLeft: 8 }}>
             {me?.alive === false
@@ -255,198 +263,68 @@ export default function Game() {
         </div>
       )}
 
-      {/* Rank chooser */}
-      {isChoosingRank && (
-        <div
-          className="panel"
-          style={{
-            padding: 14,
-            marginBottom: 12,
-            borderColor: "var(--border-strong)",
-          }}
-        >
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>
-            Round starting — choose table rank
-          </div>
-          <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-            {canChooseRank
-              ? "Pick the rank everyone must claim this round."
-              : `Waiting for ${currentPlayer?.name} to choose...`}
-          </div>
-          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-            {RANKS.map((r) => (
-              <button
-                key={r}
-                onClick={() => chooseRank(r)}
-                disabled={!canChooseRank}
-                style={{ minWidth: 60 }}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Status row */}
+      {/* -------- TOP AREA: table + optional right rank panel -------- */}
       <div
-        className="grid"
         style={{
-          gridTemplateColumns: "1fr 1fr 1fr",
-          gap: 12,
-          marginBottom: 12,
+          flex: 1,
+          display: "grid",
+          gridTemplateColumns: isDesktop ? "1fr 220px" : "1fr",
+          gap: 10,
+          minHeight: 0,
         }}
       >
-        <StatusBox title="Table Rank">
-          <div
-            style={{
-              fontSize: 28,
-              fontWeight: 900,
-              color: "var(--accent)",
-            }}
-          >
-            {game.tableRank ?? "—"}
-          </div>
-          <div className="muted">
-            {isChoosingRank
-              ? "Rank not chosen yet"
-              : `Everyone claims ${game.tableRank}`}
-          </div>
-        </StatusBox>
+        <TableView
+          players={game.players}
+          me={me}
+          currentPlayer={currentPlayer}
+          responder={responder}
+          tableRank={game.tableRank}
+          showCenterRank={!isDesktop} // mobile: center rank
+        />
 
-        <StatusBox title="Current Turn">
-          <div style={{ fontSize: 18, fontWeight: 800 }}>
-            {currentPlayer?.name}
-            {currentPlayer?.name === myName ? " (you)" : ""}
-          </div>
-          <div
-            style={{
-              color: isMyTurn ? "var(--accent-2)" : "var(--muted)",
-              fontWeight: 800,
-            }}
-          >
-            {isChoosingRank
-              ? isMyTurn
-                ? "Choose the rank"
-                : "Waiting for rank selection"
-              : isMyTurn
-              ? "Your turn to play"
-              : "Waiting for play"}
-          </div>
-        </StatusBox>
-
-        <StatusBox title="Last Declaration">
-          {game.lastPlay ? (
-            <>
-              <div style={{ fontWeight: 800 }}>
-                {game.lastPlay.playerName} declared {game.lastPlay.count}
-              </div>
-              <div className="muted">
-                claiming {game.lastPlay.count} × {game.tableRank}
-              </div>
-            </>
-          ) : (
-            <div className="muted">No declaration yet</div>
-          )}
-        </StatusBox>
+        {/* Desktop right-side rank panel */}
+        {isDesktop && (
+          <RankPanel rank={game.tableRank} />
+        )}
       </div>
 
-      {/* VISUAL TABLE (no gameplay logic changed) */}
-      <TableView
-        players={game.players}
-        me={me}
-        currentPlayer={currentPlayer}
-        responder={responder}
-      />
-
-      {/* Right column pile/deck */}
+      {/* -------- BOTTOM AREA: choose rank OR hand -------- */}
       <div
-        className="grid"
+        className="panel"
         style={{
-          gridTemplateColumns: "2fr 1fr",
-          gap: 12,
-          marginTop: 12,
+          padding: 10,
+          borderColor: "var(--border-strong)",
+          flexShrink: 0,
         }}
       >
-        <div>
-          <h3 className="h3" style={{ margin: "6px 0" }}>
-            Players
-          </h3>
-          <div className="grid">
-            {game.players.map((p) => {
-              const isTurn = p.socketId === currentPlayer?.socketId;
-              const isNext = responder && p.socketId === responder.socketId;
-              const dead = !p.alive || !p.connected;
-
-              return (
-                <div
-                  key={p.socketId}
-                  className="panel-soft"
-                  style={{
-                    padding: "10px 12px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    borderColor: isTurn
-                      ? "var(--border-strong)"
-                      : "var(--border)",
-                    opacity: dead ? 0.45 : 1,
-                    filter: dead ? "grayscale(1)" : "none",
-                  }}
+        {isChoosingRank ? (
+          <>
+            <div style={{ fontWeight: 900, marginBottom: 6 }}>
+              Choose table rank
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+              {canChooseRank
+                ? "Pick the rank everyone must claim."
+                : `Waiting for ${currentPlayer?.name}...`}
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              {RANKS.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => chooseRank(r)}
+                  disabled={!canChooseRank}
+                  style={{ minWidth: 56 }}
                 >
-                  <div>
-                    <b>{p.name}</b>
-                    {dead && (
-                      <span className="badge danger" style={{ marginLeft: 8 }}>
-                        dead
-                      </span>
-                    )}
-                    {isTurn && !dead && (
-                      <span className="badge" style={{ marginLeft: 8 }}>
-                        playing
-                      </span>
-                    )}
-                    {isNext && !isTurn && !dead && (
-                      <span className="badge" style={{ marginLeft: 8 }}>
-                        responder
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="muted" style={{ fontSize: 13 }}>
-                    cards {p.cardsCount} ·{" "}
-                    {p.connected ? "connected" : "disconnected"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div>
-          <h3 className="h3" style={{ margin: "6px 0" }}>
-            Pile
-          </h3>
-          <PileStack count={game.pileSize ?? 0} />
-          <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-            Deck remaining: {game.deckCount}
-          </div>
-        </div>
-      </div>
-
-      {/* Hand */}
-      <div style={{ marginTop: 16 }}>
-        <h3 className="h3">Your Hand</h3>
-
-        {isSpectator || isChoosingRank ? (
-          <div className="muted" style={{ padding: "8px 0" }}>
-            {isChoosingRank
-              ? "Dealing after rank selection..."
-              : "Hand hidden while spectating."}
-          </div>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : isSpectator ? (
+          <div className="muted">Hand hidden while spectating.</div>
         ) : (
           <>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {hand.map((c) => (
                 <CardView
                   key={c.id}
@@ -458,7 +336,7 @@ export default function Game() {
               ))}
             </div>
 
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
               {isMyTurn && (
                 <button onClick={playSelected}>
                   Play {selected.length} card(s)
@@ -489,9 +367,42 @@ export default function Game() {
   );
 }
 
+/* ---------------- Desktop rank panel ---------------- */
+
+function RankPanel({ rank }) {
+  return (
+    <div className="panel" style={{ padding: 14, height: "fit-content" }}>
+      <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>
+        Rank
+      </div>
+      <div
+        style={{
+          fontSize: 56,
+          fontWeight: 1000,
+          color: "var(--accent)",
+          textAlign: "center",
+          marginTop: 6,
+        }}
+      >
+        {rank ?? "—"}
+      </div>
+      <div className="muted" style={{ fontSize: 12, textAlign: "center" }}>
+        Table claim
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- TABLE VIEW ---------------- */
 
-function TableView({ players, me, currentPlayer, responder }) {
+function TableView({
+  players,
+  me,
+  currentPlayer,
+  responder,
+  tableRank,
+  showCenterRank,
+}) {
   const mySeatIndex = me
     ? players.findIndex((p) => p.socketId === me.socketId)
     : 0;
@@ -504,37 +415,68 @@ function TableView({ players, me, currentPlayer, responder }) {
       className="panel"
       style={{
         position: "relative",
-        width: "min(900px, 100%)",
-        margin: "0 auto",
-        padding: 10,
-        aspectRatio: "3 / 4",
-        minHeight: 520,
+        width: "100%",
+        height: "100%",
+        minHeight: 0,
         overflow: "hidden",
+        display: "grid",
+        placeItems: "center",
       }}
     >
-      {/* Vertical shorter oval */}
+      {/* Vertical smaller oval */}
       <svg
         viewBox="0 0 900 1600"
         preserveAspectRatio="xMidYMid meet"
         style={{
           position: "absolute",
-          inset: "4% 10%",
-          width: "80%",
-          height: "92%",
-          filter: "drop-shadow(0 20px 40px rgba(0,0,0,0.6))",
+          inset: "8% 16%",
+          width: "68%",
+          height: "84%",
+          filter: "drop-shadow(0 14px 28px rgba(0,0,0,0.55))",
         }}
       >
-        <ellipse cx="450" cy="800" rx="320" ry="520" fill="#0b8f3b" />
+        <ellipse cx="450" cy="800" rx="280" ry="460" fill="#0b8f3b" />
         <ellipse
           cx="450"
           cy="800"
-          rx="340"
-          ry="540"
+          rx="298"
+          ry="478"
           fill="none"
           stroke="#055626"
-          strokeWidth="30"
+          strokeWidth="26"
         />
       </svg>
+
+      {/* Mobile center rank (minimal) */}
+      {showCenterRank && (
+        <div
+          className="panel-soft"
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            transform: "translate(-50%, -50%)",
+            padding: "10px 12px",
+            textAlign: "center",
+            minWidth: 140,
+            borderColor: "var(--border-strong)",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          <div className="muted" style={{ fontSize: 11, fontWeight: 800 }}>
+            Rank
+          </div>
+          <div
+            style={{
+              fontSize: 36,
+              fontWeight: 1000,
+              color: "var(--accent)",
+            }}
+          >
+            {tableRank ?? "—"}
+          </div>
+        </div>
+      )}
 
       {/* Seats */}
       {ordered.map((p, idx) => {
@@ -544,6 +486,12 @@ function TableView({ players, me, currentPlayer, responder }) {
         const isMe = me && p.socketId === me.socketId;
 
         const dead = !p.alive || !p.connected;
+
+        const baseBorder = "1px solid rgba(255,255,255,0.12)";
+        const responderBorder = "2px solid rgba(59,130,246,0.9)";
+        const currentBorder = "3px solid var(--accent)";
+        const currentGlow = "0 0 18px rgba(34,211,238,0.75)";
+        const responderGlow = "0 0 12px rgba(59,130,246,0.5)";
 
         return (
           <div
@@ -555,32 +503,40 @@ function TableView({ players, me, currentPlayer, responder }) {
               transform: "translate(-50%, -50%)",
               display: "grid",
               placeItems: "center",
-              gap: 6,
-              minWidth: 90,
+              gap: 5,
+              minWidth: 80,
               opacity: dead ? 0.45 : 1,
               filter: dead ? "grayscale(1)" : "none",
+              zIndex: isTurn ? 5 : 2,
             }}
           >
             <div
+              className={isTurn ? "seat-pulse" : ""}
               style={{
-                width: 54,
-                height: 54,
+                width: 50,
+                height: 50,
                 borderRadius: 999,
                 display: "grid",
                 placeItems: "center",
-                background: isTurn
+                background: dead
+                  ? "rgba(255,255,255,0.03)"
+                  : isTurn
                   ? "rgba(34,211,238,0.18)"
+                  : isNext
+                  ? "rgba(59,130,246,0.12)"
                   : isMe
-                  ? "rgba(34,197,94,0.18)"
+                  ? "rgba(34,197,94,0.16)"
                   : "rgba(255,255,255,0.04)",
                 border: isTurn
-                  ? "2px solid var(--accent)"
-                  : isMe
-                  ? "2px solid var(--accent-2)"
-                  : "1px solid rgba(255,255,255,0.12)",
+                  ? currentBorder
+                  : isNext
+                  ? responderBorder
+                  : baseBorder,
                 boxShadow: isTurn
-                  ? "0 0 18px rgba(34,211,238,0.6)"
-                  : "0 10px 18px rgba(0,0,0,0.45)",
+                  ? `${currentGlow}, 0 7px 14px rgba(0,0,0,0.45)`
+                  : isNext
+                  ? `${responderGlow}, 0 6px 12px rgba(0,0,0,0.4)`
+                  : "0 6px 12px rgba(0,0,0,0.45)",
               }}
             >
               {dead ? <DeadIcon /> : <PlayerIcon />}
@@ -588,7 +544,7 @@ function TableView({ players, me, currentPlayer, responder }) {
 
             <div
               style={{
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: 900,
                 textAlign: "center",
                 padding: "2px 6px",
@@ -596,29 +552,37 @@ function TableView({ players, me, currentPlayer, responder }) {
                 background: "rgba(0,0,0,0.35)",
                 border: "1px solid rgba(255,255,255,0.08)",
                 color: dead ? "#9ca3af" : "var(--text)",
-                maxWidth: 120,
+                maxWidth: 110,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
               }}
             >
               {p.name}
-              {isMe && <span className="muted"> (you)</span>}
             </div>
 
-            <div className="muted" style={{ fontSize: 11 }}>
-              {dead ? "dead / spectating" : `cards ${p.cardsCount}`}
-            </div>
+            {isMe && (
+              <div
+                className="badge"
+                style={{
+                  fontSize: 9,
+                  padding: "2px 6px",
+                  borderColor: "var(--border-strong)",
+                }}
+              >
+                YOU
+              </div>
+            )}
 
             {(isTurn || isNext) && !dead && (
               <div style={{ display: "flex", gap: 6 }}>
                 {isTurn && (
-                  <span className="badge" style={{ fontSize: 10 }}>
+                  <span className="badge" style={{ fontSize: 9 }}>
                     playing
                   </span>
                 )}
                 {isNext && !isTurn && (
-                  <span className="badge" style={{ fontSize: 10 }}>
+                  <span className="badge" style={{ fontSize: 9 }}>
                     responder
                   </span>
                 )}
@@ -627,6 +591,17 @@ function TableView({ players, me, currentPlayer, responder }) {
           </div>
         );
       })}
+
+      <style>{`
+        .seat-pulse {
+          animation: seatPulse 1.2s infinite ease-in-out;
+        }
+        @keyframes seatPulse {
+          0%   { transform: scale(1); }
+          50%  { transform: scale(1.06); }
+          100% { transform: scale(1); }
+        }
+      `}</style>
     </div>
   );
 }
@@ -636,15 +611,14 @@ function rotatePlayers(arr, startIndex) {
   return [...arr.slice(startIndex), ...arr.slice(0, startIndex)];
 }
 
-// vertical ellipse seats: index 0 bottom, clockwise
 function makeSeatCoords(n) {
   if (n <= 1) return [{ x: 50, y: 86 }];
 
   const coords = [];
   const cx = 50;
   const cy = 50;
-  const rx = 32;
-  const ry = 36;
+  const rx = 30;
+  const ry = 33;
 
   for (let i = 0; i < n; i++) {
     const angle = Math.PI / 2 - (i * (2 * Math.PI)) / n;
@@ -656,66 +630,7 @@ function makeSeatCoords(n) {
   return coords;
 }
 
-/* ---------------- UI Helpers ---------------- */
-
-function StatusBox({ title, children }) {
-  return (
-    <div className="panel" style={{ padding: "12px 14px", minHeight: 78 }}>
-      <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function PileStack({ count }) {
-  const visible = Math.min(count, 4);
-  const offsets = [0, 6, 12, 18];
-
-  return (
-    <div
-      className="panel-soft"
-      style={{
-        padding: 12,
-        minHeight: 150,
-        position: "relative",
-        display: "grid",
-        placeItems: "center",
-      }}
-    >
-      <div style={{ position: "relative", width: 90, height: 120 }}>
-        {Array.from({ length: visible }).map((_, i) => (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              inset: 0,
-              transform: `translate(${offsets[i]}px, ${-offsets[i]}px)`,
-              borderRadius: 10,
-              background:
-                "repeating-linear-gradient(45deg, #0b1222 0px, #0b1222 6px, #0e1730 6px, #0e1730 12px)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              boxShadow: "0 8px 18px rgba(0,0,0,0.45)",
-            }}
-          />
-        ))}
-      </div>
-
-      <div
-        className="badge"
-        style={{
-          position: "absolute",
-          bottom: 10,
-          right: 10,
-          fontWeight: 900,
-        }}
-      >
-        +{count}
-      </div>
-    </div>
-  );
-}
+/* ---------------- Round Modal ---------------- */
 
 function RoundModal({ modal }) {
   const isLiar = modal.result === "liar";
@@ -733,15 +648,15 @@ function RoundModal({ modal }) {
       <div
         className="panel"
         style={{
-          padding: "22px 26px",
-          width: "min(540px, 92vw)",
+          padding: "20px 24px",
+          width: "min(520px, 92vw)",
           textAlign: "center",
           animation: "pop .18s ease-out",
         }}
       >
         <div
           style={{
-            fontSize: 54,
+            fontSize: 50,
             fontWeight: 1000,
             letterSpacing: 1,
             color: isLiar ? "var(--danger)" : "var(--accent-2)",
@@ -774,7 +689,7 @@ function RoundModal({ modal }) {
 
 function PlayerIcon() {
   return (
-    <svg viewBox="0 0 32 32" width="28" height="28" fill="currentColor">
+    <svg viewBox="0 0 32 32" width="24" height="24" fill="currentColor">
       <g id="about">
         <path d="M16,16A7,7,0,1,0,9,9,7,7,0,0,0,16,16ZM16,4a5,5,0,1,1-5,5A5,5,0,0,1,16,4Z" />
         <path d="M17,18H15A11,11,0,0,0,4,29a1,1,0,0,0,1,1H27a1,1,0,0,0,1-1A11,11,0,0,0,17,18ZM6.06,28A9,9,0,0,1,15,20h2a9,9,0,0,1,8.94,8Z" />
@@ -785,7 +700,7 @@ function PlayerIcon() {
 
 function DeadIcon() {
   return (
-    <div style={{ position: "relative", width: 28, height: 28 }}>
+    <div style={{ position: "relative", width: 24, height: 24 }}>
       <PlayerIcon />
       <div
         style={{
@@ -793,7 +708,7 @@ function DeadIcon() {
           inset: -6,
           display: "grid",
           placeItems: "center",
-          fontSize: 16,
+          fontSize: 14,
           color: "#9ca3af",
         }}
       >

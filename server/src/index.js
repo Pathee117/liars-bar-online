@@ -155,7 +155,7 @@ io.on("connection", (socket) => {
     if (!chooser || chooser.socketId !== socket.id)
       return cb?.({ error: "Only current player can choose rank" });
 
-    const allowed = new Set(["A", "K", "Q", "J"]);
+    const allowed = new Set(["A", "K", "Q"]);
     if (!allowed.has(rank))
       return cb?.({ error: "Invalid rank" });
 
