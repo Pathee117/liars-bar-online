@@ -123,13 +123,18 @@ io.on("connection", (socket) => {
     g.lastPlay = null;
     g.responderIndex = null;
 
-    // Next chooser is the responder from the challenge (baseline rule)
+    // ----------------------------------------------------------------
+    // FIX: after gun fire, next chooser must go to NEXT player
+    // (i.e., next alive AFTER the responder)
     const responder = lobby.players.find(
       (p) => p.socketId === meta.challengerSocketId
     );
-    g.turnIndex = responder
+    const responderIndex = responder
       ? lobby.players.indexOf(responder)
-      : nextAliveIndex(lobby, g.turnIndex);
+      : g.turnIndex;
+
+    g.turnIndex = nextAliveIndex(lobby, responderIndex);
+    // ----------------------------------------------------------------
 
     g.phase = "chooseRank";
     g.tableRank = null;
@@ -297,7 +302,6 @@ io.on("connection", (socket) => {
     if (!chooser || chooser.socketId !== socket.id)
       return cb?.({ error: "Only current player can choose rank" });
 
-    // Allow A,K,Q,J
     const allowed = new Set(["A", "K", "Q", "J"]);
     if (!allowed.has(rank)) return cb?.({ error: "Invalid rank" });
 

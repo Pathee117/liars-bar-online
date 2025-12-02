@@ -22,7 +22,7 @@ export default function Game() {
   // --- Gun modal state ---
   const [gunPending, setGunPending] = useState(null);
   const [gunResult, setGunResult] = useState(null);
-  // shape: { pendingGunFor, loserName }
+  // shape: { pendingGunFor, loserName, canSpin }
 
   const myName =
     localStorage.getItem(`liarsbar:name:${id}`) ||
@@ -76,8 +76,8 @@ export default function Game() {
       setGunPending(data);
       setGunResult(null);
     };
+
     const onGunResult = (data) => {
-      // show tiny toast + close modal after a beat
       pushToast(
         data.died
           ? `${data.loserName} died.`
@@ -334,6 +334,8 @@ export default function Game() {
           responder={responder}
           tableRank={game.tableRank}
           showCenterRank={!isDesktop}
+          pileSize={game.pileSize}
+          lastPlay={game.lastPlay}
         />
 
         {isDesktop && <RankPanel rank={game.tableRank} />}
@@ -470,6 +472,8 @@ function TableView({
   responder,
   tableRank,
   showCenterRank,
+  pileSize,
+  lastPlay,
 }) {
   const mySeatIndex = me
     ? players.findIndex((p) => p.socketId === me.socketId)
@@ -514,6 +518,7 @@ function TableView({
         />
       </svg>
 
+      {/* Mobile center rank */}
       {showCenterRank && (
         <div
           className="panel-soft"
@@ -544,6 +549,37 @@ function TableView({
         </div>
       )}
 
+      {/* Pile visual (everyone sees count + last play) */}
+      <div
+        className="panel-soft"
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "62%",
+          transform: "translate(-50%, -50%)",
+          padding: "8px 12px",
+          minWidth: 150,
+          textAlign: "center",
+          borderColor: "var(--border-strong)",
+          backdropFilter: "blur(6px)",
+        }}
+      >
+        <div className="muted" style={{ fontSize: 11, fontWeight: 800 }}>
+          Pile
+        </div>
+
+        <div style={{ fontSize: 20, fontWeight: 1000 }}>
+          {pileSize ?? 0} card(s)
+        </div>
+
+        {lastPlay && (
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+            {lastPlay.playerName} played {lastPlay.count}
+          </div>
+        )}
+      </div>
+
+      {/* Seats */}
       {ordered.map((p, idx) => {
         const seat = seats[idx];
         const isTurn = p.socketId === currentPlayer?.socketId;
