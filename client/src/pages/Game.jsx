@@ -308,12 +308,22 @@ export default function Game() {
 
       {isSpectator && (
         <div className="panel-soft" style={{ padding: 8 }}>
-          <b>{me?.alive === false ? "You are dead" : "Spectating"}</b>
-          <span className="muted" style={{ marginLeft: 8 }}>
-            {me?.alive === false
-              ? "You can watch until the match ends."
-              : "You joined mid-game. You can watch this match."}
-          </span>
+          {me?.alive === false && (
+            <>
+              <b>You are dead</b>
+              <span className="muted" style={{ marginLeft: 8 }}>
+                You can watch until the match ends.
+              </span>
+            </>
+          )}
+          {(!me || (me && me.spectator)) && me?.alive !== false && (
+            <>
+              <b>Spectating</b>
+              <span className="muted" style={{ marginLeft: 8 }}>
+                You joined mid-game. You can watch this match.
+              </span>
+            </>
+          )}
         </div>
       )}
 

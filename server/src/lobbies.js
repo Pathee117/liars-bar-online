@@ -40,12 +40,21 @@ export function addPlayer(lobbyId, socketId, name) {
   const lobby = lobbies.get(lobbyId);
   if (!lobby) return null;
 
-  // If same name already exists and is disconnected, treat as reconnect pre-game
+  // If same name already exists and is disconnected
   const existingByName = lobby.players.find(p => p.name === name);
   if (existingByName && !existingByName.connected) {
     existingByName.socketId = socketId;
     existingByName.connected = true;
-    lobby.systemEvent = { type: "player:reconnected", name };
+    if (lobby.state === "playing") {
+      existingByName.alive = false;
+      existingByName.hand = [];
+      existingByName.spectator = true;
+      lobby.systemEvent = { type: "player:spectator", name };
+    } else {
+      existingByName.alive = true;
+      existingByName.spectator = false;
+      lobby.systemEvent = { type: "player:reconnected", name };
+    }
     return lobby;
   }
 
@@ -58,7 +67,9 @@ export function addPlayer(lobbyId, socketId, name) {
     name,
     connected: true,
     hand: [],
-    lives: 3
+    lives: 3,
+    alive: lobby.state === "lobby", // Only alive if in lobby
+    spectator: lobby.state !== "lobby" // Only spectator if not in lobby
   });
 
   lobby.systemEvent = { type: "player:connected", name };

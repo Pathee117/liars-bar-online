@@ -252,8 +252,10 @@ io.on("connection", (socket) => {
       return cb?.({ error: "Only host can start" });
     if (lobby.state !== "lobby") return cb?.({ error: "Game already started" });
 
-    const connectedPlayers = lobby.players.filter((p) => p.connected);
-    if (connectedPlayers.length < 2 || connectedPlayers.length > 8)
+    // Remove disconnected players before starting the game
+    lobby.players = lobby.players.filter((p) => p.connected);
+
+    if (lobby.players.length < 2 || lobby.players.length > 8)
       return cb?.({ error: "Need 2–8 players" });
 
     lobby.state = "playing";
