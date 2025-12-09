@@ -345,6 +345,7 @@ export default function Game() {
           tableRank={game.tableRank}
           showCenterRank={!isDesktop}
           pileSize={game.pileSize}
+          pile={game.pile}
           lastPlay={game.lastPlay}
         />
 
@@ -483,6 +484,7 @@ function TableView({
   tableRank,
   showCenterRank,
   pileSize,
+  pile,
   lastPlay,
 }) {
   const mySeatIndex = me
@@ -559,35 +561,41 @@ function TableView({
         </div>
       )}
 
-      {/* Pile visual (everyone sees count + last play) */}
-      <div
-        className="panel-soft"
-        style={{
-          position: "absolute",
-          left: "50%",
-          top: "62%",
-          transform: "translate(-50%, -50%)",
-          padding: "8px 12px",
-          minWidth: 150,
-          textAlign: "center",
-          borderColor: "var(--border-strong)",
-          backdropFilter: "blur(6px)",
-        }}
-      >
-        <div className="muted" style={{ fontSize: 11, fontWeight: 800 }}>
-          Pile
+      {/* Pile visual - show actual cards */}
+      {pile && pile.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "62%",
+            transform: "translate(-50%, -50%)",
+            display: "flex",
+            gap: "-30px",
+            alignItems: "center",
+            justifyContent: "center",
+            flexWrap: "wrap",
+            maxWidth: "300px",
+          }}
+        >
+          {pile.slice(-Math.min(pile.length, 8)).map((card, idx) => {
+            // Show cards face-down unless the viewer is the last player who played
+            const showFaceDown = lastPlay && me && lastPlay.playerSocketId !== me.socketId;
+            
+            return (
+              <div
+                key={card.id || idx}
+                style={{
+                  transform: `rotate(${(idx - pile.length / 2) * 3}deg) translateY(${idx * 2}px)`,
+                  marginLeft: idx > 0 ? "-30px" : "0",
+                  zIndex: idx,
+                }}
+              >
+                <CardView card={card} disabled={true} faceDown={showFaceDown} />
+              </div>
+            );
+          })}
         </div>
-
-        <div style={{ fontSize: 20, fontWeight: 1000 }}>
-          {pileSize ?? 0} card(s)
-        </div>
-
-        {lastPlay && (
-          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-            {lastPlay.playerName} played {lastPlay.count}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Seats */}
       {ordered.map((p, idx) => {

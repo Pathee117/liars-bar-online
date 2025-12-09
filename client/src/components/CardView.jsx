@@ -1,9 +1,48 @@
 const suitMap = { S: "♠", H: "♥", D: "♦", C: "♣" };
 const redSuits = new Set(["H", "D"]);
 
-export default function CardView({ card, selected, disabled, onClick }) {
+export default function CardView({ card, selected, disabled, onClick, faceDown }) {
   const isJoker = card.r === "JOKER";
   const isRed = redSuits.has(card.s);
+
+  // ----- CARD BACK -----
+  if (faceDown) {
+    return (
+      <div
+        style={{
+          width: 76,
+          height: 108,
+          borderRadius: 12,
+          border: "1px solid rgba(255,255,255,0.12)",
+          background: "linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #1e3a8a 100%)",
+          boxShadow: "0 8px 18px rgba(0,0,0,0.45)",
+          padding: 7,
+          display: "grid",
+          placeItems: "center",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            inset: 6,
+            border: "2px solid rgba(255,255,255,0.15)",
+            borderRadius: 8,
+          }}
+        />
+        <div
+          style={{
+            fontSize: 32,
+            color: "rgba(255,255,255,0.2)",
+            fontWeight: 900,
+          }}
+        >
+          ♠
+        </div>
+      </div>
+    );
+  }
 
   // ----- JOKER CARD -----
   if (isJoker) {

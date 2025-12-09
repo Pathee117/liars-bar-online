@@ -164,8 +164,13 @@ export function publicSnapshot(lobby) {
     responderIndex: g.responderIndex,
 
     pileSize: g.pile.length,
+    pile: g.pile,
     lastPlay: g.lastPlay
-      ? { playerName: g.lastPlay.playerName, count: g.lastPlay.count }
+      ? { 
+          playerName: g.lastPlay.playerName, 
+          playerSocketId: g.lastPlay.playerSocketId,
+          count: g.lastPlay.count 
+        }
       : null,
 
     deckCount: g.deckCount,
